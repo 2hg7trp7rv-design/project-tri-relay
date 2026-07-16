@@ -1,0 +1,27 @@
+{
+  "asset": "world-city-l-v03.webp",
+  "purpose": "Production landscape gameplay and title diorama background with no baked live enemies",
+  "created": "2026-07-15",
+  "source_master": "art-source/tri-relay/world-city-l-v03-master.png",
+  "source_method": "OpenAI built-in image editing; targeted removal of fixed enemy figures from the project-owned v02 landscape master",
+  "prompt_summary": "Preserve the TRI RELAY landscape city, facilities, relay, camera and lighting; remove all fixed enemy figures from the red bridge and reconstruct it with empty industrial structure, warning lights, smoke and non-figurative red fog.",
+  "references": [
+    "art-source/tri-relay/world-city-l-v02-master.png"
+  ],
+  "seed": null,
+  "post_processing": "The edited enemy/bridge region was resized to the 1920x1080 source geometry and feather-composited over the unchanged v02 master; exported as sRGB WebP quality 84.",
+  "dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "bytes": 149036,
+  "sha256": "c2b6818045d3dbed52597bba9e8461e9d4c5e2428e09a11f155106608a8713d5",
+  "source_dimensions": {
+    "width": 1920,
+    "height": 1080
+  },
+  "source_bytes": 2695273,
+  "sha256_source_png": "ab880881d4981986cf0b02b78eeadcdb361efd2ef3ba5182b013449b2fb238b1",
+  "rights_status": "Generated specifically for TRI RELAY from project-owned source art; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

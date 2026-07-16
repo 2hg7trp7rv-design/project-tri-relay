@@ -1,0 +1,14 @@
+{
+  "assets": [
+    { "file": "icon-192-v03.png", "dimensions": { "width": 192, "height": 192 }, "bytes": 22199, "sha256": "33b17d173ce259e2273e29f13d2a3b5766828f35ee049c30d8da46442f64a5c6" },
+    { "file": "icon-512-v03.png", "dimensions": { "width": 512, "height": 512 }, "bytes": 130898, "sha256": "39b73212c5af25e33c2b469d48be22c8d63f9cf674bb110f652ae65a6dffb396" },
+    { "file": "icon-maskable-512-v03.png", "dimensions": { "width": 512, "height": 512 }, "bytes": 84585, "sha256": "d49882e4f5d9146645e5730fbb0e31abbb636c9115a597daf543f3d7e64904b8" },
+    { "file": "apple-touch-icon-180-v03.png", "dimensions": { "width": 180, "height": 180 }, "bytes": 19523, "sha256": "6c0f3465e464d25046e92b621f8c424c7460b21ff6ec2aacb5310bdd96d4340c" }
+  ],
+  "created": "2026-07-13",
+  "source": "public/favicon.svg",
+  "source_sha256": "260084eda39dfc3f530de3fef7efa887b0be73a018a4ecf350baeca158a74eab",
+  "process": "Deterministic rasterization of the project-owned, hand-authored SVG mark to PNG; maskable export padded to the Android safe zone on #05070a.",
+  "rights_status": "Project-owned code-native mark; organization brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

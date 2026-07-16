@@ -1,0 +1,19 @@
+{
+  "asset": "world-city-p-v02.webp",
+  "purpose": "Production mobile gameplay diorama background",
+  "created": "2026-07-13",
+  "source_master": "art-source/tri-relay/world-city-p-v02-master.png",
+  "source_method": "OpenAI built-in image generation; generated specifically for TRI RELAY",
+  "prompt_summary": "Original vertical industrial-city diorama with an extraction drill, fabrication press, defense cannon, enemy approach and central power relay; no text, logos or existing IP.",
+  "references": [],
+  "seed": null,
+  "post_processing": "Center crop and resize from 941x1672 to 1080x1920; sRGB WebP quality 84.",
+  "dimensions": { "width": 1080, "height": 1920 },
+  "bytes": 248566,
+  "sha256": "0a4cfe28835ad216b457aea797a47d0e032017304c016ba2c478e3c2f36799b1",
+  "source_dimensions": { "width": 941, "height": 1672 },
+  "source_bytes": 2367389,
+  "sha256_source_png": "500d06b798cb5bcf75478600ca3269f07b528faac13a3b1fc8abdbb0947352cd",
+  "rights_status": "Generated specifically for TRI RELAY; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

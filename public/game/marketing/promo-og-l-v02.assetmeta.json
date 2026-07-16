@@ -1,0 +1,14 @@
+{
+  "asset": "promo-og-l-v02.webp",
+  "role": "Open Graph and social landscape card",
+  "dimensions": { "width": 1200, "height": 630 },
+  "bytes": 112388,
+  "sha256": "e4ece0b96d614bcfaf752a45109fda3c784c2379224e7b8b063dbbde93caebfe",
+  "source": "art-source/tri-relay/world-city-l-v02-master.png",
+  "source_sha256": "339849dbf13be08e0cb1c0bd22259b50aabc609e6cc8145ef1c9bdfe37343007",
+  "source_method": "Source image generated specifically for TRI RELAY with the OpenAI built-in image-generation workflow.",
+  "process": "Aspect-safe center crop and resize from the owned 1920x1080 landscape master to 1200x630; sRGB WebP export. No generated lettering is baked into the asset.",
+  "created": "2026-07-13",
+  "rights_status": "Generated specifically for TRI RELAY; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

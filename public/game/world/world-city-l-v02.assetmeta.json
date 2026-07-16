@@ -1,0 +1,19 @@
+{
+  "asset": "world-city-l-v02.webp",
+  "purpose": "Production landscape gameplay and title diorama background",
+  "created": "2026-07-13",
+  "source_master": "art-source/tri-relay/world-city-l-v02-master.png",
+  "source_method": "OpenAI built-in image generation; generated specifically for TRI RELAY using the project portrait master as a visual continuity reference",
+  "prompt_summary": "Original 16:9 black-iron industrial-city diorama matching the portrait world: cyan defense cannon on the left, amber extraction drill and violet fabrication press below, red invasion bridge on the right, dark central play space and a physical three-way relay; no text, logos or existing IP.",
+  "references": ["art-source/tri-relay/world-city-p-v02-master.png"],
+  "seed": null,
+  "post_processing": "Exported at the generated 1920x1080 composition; sRGB WebP quality 84.",
+  "dimensions": { "width": 1920, "height": 1080 },
+  "bytes": 242990,
+  "sha256": "6672516ecb9597dc361c7d6ae34fa30a7fdc39546654656dd22c2cf17a541309",
+  "source_dimensions": { "width": 1920, "height": 1080 },
+  "source_bytes": 2818158,
+  "sha256_source_png": "339849dbf13be08e0cb1c0bd22259b50aabc609e6cc8145ef1c9bdfe37343007",
+  "rights_status": "Generated specifically for TRI RELAY; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

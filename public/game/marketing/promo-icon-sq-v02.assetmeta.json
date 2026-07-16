@@ -1,0 +1,13 @@
+{
+  "asset": "promo-icon-sq-v02.webp",
+  "role": "square promotional mark",
+  "dimensions": { "width": 512, "height": 512 },
+  "bytes": 59778,
+  "sha256": "b84c82dc5181028dc5f959c1d8c226eca8323785b70c3d02da273429832583bb",
+  "source": "public/favicon.svg",
+  "source_sha256": "260084eda39dfc3f530de3fef7efa887b0be73a018a4ecf350baeca158a74eab",
+  "process": "Deterministic rasterization of the project-owned, hand-authored SVG mark to a 512x512 lossless WebP.",
+  "created": "2026-07-13",
+  "rights_status": "Project-owned code-native mark; organization brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

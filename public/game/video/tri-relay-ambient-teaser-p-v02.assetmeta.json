@@ -1,0 +1,18 @@
+{
+  "asset": "tri-relay-ambient-teaser-p-v02.mp4",
+  "role": "marketing-only portrait ambient teaser",
+  "dimensions": { "width": 720, "height": 1280 },
+  "duration_seconds": 6,
+  "frames_per_second": 30,
+  "codec": "H.264, yuv420p, no audio, fast start",
+  "bytes": 1024866,
+  "sha256": "e735b6101df98c376c37c3c4f340495f8eb55568df672f55d44d0ad3acb64f6e",
+  "source": "art-source/tri-relay/world-city-p-v02-master.png",
+  "source_sha256": "500d06b798cb5bcf75478600ca3269f07b528faac13a3b1fc8abdbb0947352cd",
+  "source_method": "Source image generated specifically for TRI RELAY with the OpenAI built-in image-generation workflow.",
+  "process": "FFmpeg slow zoom/pan from the owned portrait master, H.264 encoding at 720x1280 and 30 fps; no text and no audio.",
+  "created": "2026-07-13",
+  "runtime_usage": "none; intentionally not loaded by the game",
+  "rights_status": "Generated specifically for TRI RELAY; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}

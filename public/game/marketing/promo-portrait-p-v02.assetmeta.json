@@ -1,0 +1,14 @@
+{
+  "asset": "promo-portrait-p-v02.webp",
+  "role": "portrait social and editorial key art",
+  "dimensions": { "width": 1080, "height": 1350 },
+  "bytes": 181226,
+  "sha256": "cf9f1dcf414ba7b72d0c30fd4782ecc1a7b85e5e500a57dc676e133b77fd49e1",
+  "source": "art-source/tri-relay/world-city-p-v02-master.png",
+  "source_sha256": "500d06b798cb5bcf75478600ca3269f07b528faac13a3b1fc8abdbb0947352cd",
+  "source_method": "Source image generated specifically for TRI RELAY with the OpenAI built-in image-generation workflow.",
+  "process": "Portrait crop and resize from the owned 941x1672 master to 1080x1350; sRGB WebP export. No generated lettering is baked into the asset.",
+  "created": "2026-07-13",
+  "rights_status": "Generated specifically for TRI RELAY; organization legal/brand review required before paid commercial distribution.",
+  "human_approval": "pending"
+}
