@@ -44,4 +44,4 @@ jobs:
       - name: Run bounded strategy simulation
         run: npm run simulate
         env:
-          SIMULATION_RUNS: "200"
+          SIMULATION_RUNS: "500"

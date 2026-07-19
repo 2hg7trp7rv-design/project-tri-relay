@@ -9,13 +9,15 @@ import {
   getDefenseForecast,
   getWaveProgress,
   getWaveReadout,
+  isCircuitLoadEnabled,
+  isResonanceEnabled,
   pauseGame,
   resumeGame,
   rotateRelay,
   selectUpgrade,
   startRun,
 } from "../app/game/engine.ts";
-import { SECTORS, type Sector } from "../app/game/model.ts";
+import { ENEMY_STATS, SECTORS, WAVES, type Sector } from "../app/game/model.ts";
 
 function runFor(state: ReturnType<typeof startRun>, seconds: number, hz = 60) {
   const step = 1 / hz;
@@ -107,7 +109,7 @@ test("simulation is refresh-rate independent for the same seed", () => {
   assert.ok(Math.abs((at30.enemies[0]?.progress ?? 0) - (at144.enemies[0]?.progress ?? 0)) < 0.003);
 });
 
-test("the opening route completes extraction, fabrication, and a kill within four seconds", () => {
+test("the opening route completes extraction, fabrication, and a kill within six seconds", () => {
   const state = startRun(505);
   rotateRelay(state);
   while (state.totalPulses < 1) advanceGame(state, 1 / 120);
@@ -120,7 +122,7 @@ test("the opening route completes extraction, fabrication, and a kill within fou
   rotateRelay(state);
   while (state.totalPulses < 3 || state.transits.length) advanceGame(state, 1 / 120);
   assert.equal(state.kills, 1, "the first defense pulse should destroy the opening rusher");
-  assert.ok(state.clock < 4, `opening loop took ${state.clock.toFixed(2)}s`);
+  assert.ok(state.clock < 6, `opening loop took ${state.clock.toFixed(2)}s`);
   assert.equal(state.tutorialStep, 3);
   assert.ok(state.ore >= 0 && state.ammo >= 0);
 });
@@ -137,7 +139,7 @@ test("upgrade selection applies once and advances through intermission", () => {
   assert.equal(state.phase, "intermission");
 });
 
-test("route history alone never applies an invisible pattern penalty", () => {
+test("wave rules stage the basic chain, resonance, and visible load without hidden route penalties", () => {
   const state = startRun(650);
   state.tutorialStep = 3;
   state.routeLog = [
@@ -155,15 +157,42 @@ test("route history alone never applies an invisible pattern penalty", () => {
   ];
   state.relayIndex = 0;
   state.pulseQueue[0] = "extract";
-  const forecast = getCircuitLoadForecast(state, "extract");
-  assert.equal(forecast.projectedHeat, 0, "a visible frequency match cools the branch");
+  assert.deepEqual(WAVES.map((wave) => wave.interval), [1.8, 1.72, 1.65, 1.58, 1.5, 1.45]);
+  assert.deepEqual(
+    [ENEMY_STATS.rusher.arrival, ENEMY_STATS.sapper.arrival, ENEMY_STATS.jammer.arrival, ENEMY_STATS.warden.arrival],
+    [16, 27, 33, 72],
+  );
+  assert.equal(ENEMY_STATS.warden.hp, 430);
+
+  assert.equal(isResonanceEnabled(state), false);
+  assert.equal(isCircuitLoadEnabled(state), false);
+  let forecast = getCircuitLoadForecast(state, "extract");
+  assert.equal(forecast.matched, false);
+  assert.equal(forecast.projectedHeat, 0);
   state.pulseElapsed = state.pulseInterval;
   advanceGame(state, 1 / 60);
-  assert.equal(state.transits[0]?.multiplier, 1.5);
+  assert.equal(state.transits[0]?.multiplier, 1, "wave one has no hidden frequency bonus");
+
+  state.transits = [];
+  state.waveIndex = 1;
+  state.pulseQueue[0] = "extract";
+  assert.equal(isResonanceEnabled(state), true);
+  assert.equal(isCircuitLoadEnabled(state), false);
+  forecast = getCircuitLoadForecast(state, "extract");
+  assert.equal(forecast.matched, true);
+  assert.equal(forecast.projectedHeat, 0);
+
+  state.waveIndex = 2;
+  state.ore = 8;
+  state.pulseQueue[0] = "fabricate";
+  assert.equal(isCircuitLoadEnabled(state), true);
+  forecast = getCircuitLoadForecast(state, "extract");
+  assert.equal(forecast.projectedHeat, 60, "the first visible mismatch strains the circuit");
 });
 
 test("frequency matching is visible and has no hidden timing window", () => {
   const state = startRun(651);
+  state.waveIndex = 1;
   state.clock = 1;
   state.pulseQueue[0] = "extract";
   rotateRelay(state);
@@ -176,7 +205,8 @@ test("frequency matching is visible and has no hidden timing window", () => {
 
 test("three productive frequency matches charge, then the next valid route releases one overdrive pulse", () => {
   const state = startRun(652, false);
-  state.spawnSchedule = [];
+  state.waveIndex = 1;
+  state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
   for (const sector of ["extract", "fabricate", "extract"] as const) {
     state.relayIndex = sector === "extract" ? 0 : sector === "fabricate" ? 1 : 2;
@@ -186,18 +216,66 @@ test("three productive frequency matches charge, then the next valid route relea
     while (state.transits.length) advanceGame(state, 1 / 120);
   }
   assert.equal(state.resonance, 3);
+  state.ore = 0;
   state.relayIndex = 0;
   state.pulseQueue[0] = "fabricate";
   state.pulseElapsed = state.pulseInterval;
   advanceGame(state, 1 / 120);
+  assert.equal(state.transits[0]?.multiplier, 3, "extract overdrive uses its displayed 3× output");
   while (state.transits.length) advanceGame(state, 1 / 120);
   assert.equal(state.overdrives, 1);
   assert.equal(state.resonance, 0);
+  assert.equal(state.ore, 12, "overdrive is the normal extraction formula at 3×, not a fixed resolution");
   assert.ok(state.notices.some((notice) => notice.text.includes("RESONANCE OVERDRIVE")));
+
+  const fabricate = startRun(6521, false);
+  fabricate.waveIndex = 1;
+  fabricate.spawnSchedule = [{ at: 999, kind: "rusher" }];
+  fabricate.spawnCursor = 0;
+  fabricate.resonance = 3;
+  fabricate.ore = 8;
+  fabricate.relayIndex = 1;
+  fabricate.pulseQueue[0] = "extract";
+  fabricate.pulseElapsed = fabricate.pulseInterval;
+  advanceGame(fabricate, 1 / 120);
+  assert.equal(fabricate.transits[0]?.multiplier, 1.75);
+  while (fabricate.transits.length) advanceGame(fabricate, 1 / 120);
+  assert.equal(fabricate.ammo, 10.5, "fabrication overdrive scales its normal batch");
+
+  const defend = startRun(6522, false);
+  defend.waveIndex = 1;
+  defend.spawnSchedule = [];
+  defend.spawnCursor = 0;
+  defend.enemies = [{
+    id: 6522,
+    kind: "rusher",
+    hp: 100,
+    maxHp: 100,
+    progress: 0.1,
+    speed: 0,
+    breachDamage: 1,
+    track: 0,
+    spawnedAt: 0,
+    abilityAt: 999,
+    abilityUsed: false,
+    nextAbilityAt: 999,
+    stunnedUntil: 0,
+    flashUntil: 0,
+  }];
+  defend.resonance = 3;
+  defend.ammo = 6;
+  defend.relayIndex = 2;
+  defend.pulseQueue[0] = "extract";
+  defend.pulseElapsed = defend.pulseInterval;
+  advanceGame(defend, 1 / 120);
+  assert.equal(defend.transits[0]?.multiplier, 1.67);
+  while (defend.transits.length) advanceGame(defend, 1 / 120);
+  assert.equal(defend.enemies[0].hp, 69.94, "defense overdrive scales a six-round shot");
 });
 
 test("an empty matched machine does not create free resonance", () => {
   const state = startRun(655, false);
+  state.waveIndex = 1;
   state.spawnSchedule = [];
   state.spawnCursor = 0;
   state.enemies = [];
@@ -211,6 +289,7 @@ test("an empty matched machine does not create free resonance", () => {
 
 test("a visible frequency miss leaks one banked resonance charge", () => {
   const state = startRun(653, false);
+  state.waveIndex = 1;
   state.resonance = 2;
   state.ore = 8;
   state.pulseQueue[0] = "defend";
@@ -223,6 +302,7 @@ test("a visible frequency miss leaks one banked resonance charge", () => {
 
 test("an invalid route resets a ready overdrive instead of banking forever", () => {
   const state = startRun(654, false);
+  state.waveIndex = 1;
   state.resonance = 3;
   state.spawnSchedule = [];
   state.spawnCursor = 0;
@@ -239,6 +319,7 @@ test("an invalid route resets a ready overdrive instead of banking forever", () 
 
 test("a forecast resource emergency can rationally override affinity without leaking resonance", () => {
   const state = startRun(6541, false);
+  state.waveIndex = 2;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
   state.resonance = 2;
@@ -262,6 +343,7 @@ test("a forecast resource emergency can rationally override affinity without lea
 
 test("a matched dry route is not safe autopilot: it heats the branch and resets resonance", () => {
   const state = startRun(6542, false);
+  state.waveIndex = 2;
   state.resonance = 2;
   state.ore = 24;
   state.relayIndex = 0;
@@ -281,6 +363,7 @@ test("a matched dry route is not safe autopilot: it heats the branch and resets 
 
 test("circuit load forecasts a mismatch before it strains and overloads a branch", () => {
   const state = startRun(656, false);
+  state.waveIndex = 2;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
   state.enemies = [{
@@ -334,6 +417,7 @@ test("circuit load forecasts a mismatch before it strains and overloads a branch
 
 test("avoiding a loaded branch cools it and an earned overdrive vents it", () => {
   const state = startRun(657, false);
+  state.waveIndex = 2;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
   state.enemies = [{
@@ -383,6 +467,7 @@ test("avoiding a loaded branch cools it and an earned overdrive vents it", () =>
 function measureLoadEfficiency(seed: number, cycle: readonly Sector[] | null, pulses: number) {
   const state = createGameState(seed);
   state.phase = "playing";
+  state.waveIndex = 2;
   state.tutorialStep = 3;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
@@ -419,11 +504,27 @@ function measureLoadEfficiency(seed: number, cycle: readonly Sector[] | null, pu
   return retainedOutput / pulses;
 }
 
-function forEachFixedCycle(length: number, visit: (cycle: readonly Sector[]) => void) {
+function forEachPrimitiveCycle(length: number, visit: (cycle: readonly Sector[]) => void) {
   const cycle = Array<Sector>(length);
   const walk = (index: number) => {
     if (index === length) {
-      visit(cycle);
+      const hasShorterPeriod = Array.from(
+        { length: Math.max(0, length - 1) },
+        (_, periodIndex) => periodIndex + 1,
+      ).some(
+        (period) =>
+          length % period === 0 &&
+          cycle.every((sector, cycleIndex) => sector === cycle[cycleIndex % period]),
+      );
+      if (hasShorterPeriod) return;
+      const phases = cycle.map((_, offset) => [
+        ...cycle.slice(offset),
+        ...cycle.slice(0, offset),
+      ]);
+      const normalized = phases.reduce((best, phase) =>
+        phase.join(">") < best.join(">") ? phase : best,
+      );
+      if (cycle.join(">") === normalized.join(">")) visit([...cycle]);
       return;
     }
     for (const sector of SECTORS) {
@@ -437,6 +538,7 @@ function forEachFixedCycle(length: number, visit: (cycle: readonly Sector[]) => 
 function collectAffinities(seed: number, pulses: number) {
   const state = createGameState(seed);
   state.phase = "playing";
+  state.waveIndex = 2;
   state.tutorialStep = 3;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
@@ -496,16 +598,18 @@ test("affinity forecast is seeded and varied without an untelegraphed four-pulse
   );
 });
 
-test("every fixed cycle of length 2 through 8 retains materially less output than affinity-adaptive routing", { timeout: 30_000 }, () => {
+test("all 1,318 primitive phase-normalized cycles of length 1 through 8 trail adaptive routing", { timeout: 30_000 }, () => {
   const seeds = Array.from({ length: 12 }, (_, index) => 8100 + index * 97);
   const pulses = 24;
   const adaptiveEfficiency =
     seeds.reduce((sum, seed) => sum + measureLoadEfficiency(seed, null, pulses), 0) / seeds.length;
   assert.equal(adaptiveEfficiency, 1);
 
-  for (let length = 2; length <= 8; length += 1) {
+  let auditedCycles = 0;
+  for (let length = 1; length <= 8; length += 1) {
     let bestFixedEfficiency = 0;
-    forEachFixedCycle(length, (cycle) => {
+    forEachPrimitiveCycle(length, (cycle) => {
+      auditedCycles += 1;
       const efficiency =
         seeds.reduce(
           (sum, seed) => sum + measureLoadEfficiency(seed, cycle, pulses),
@@ -518,9 +622,10 @@ test("every fixed cycle of length 2 through 8 retains materially less output tha
       `length ${length}: best fixed ${bestFixedEfficiency.toFixed(3)} vs adaptive ${adaptiveEfficiency.toFixed(3)}`,
     );
   }
+  assert.equal(auditedCycles, 1_318);
 });
 
-test("the guided first wave reaches its first upgrade in 20 to 25 seconds across seeds", () => {
+test("the guided first wave reaches its first upgrade in 20 to 30 seconds across seeds", () => {
   for (let seed = 650; seed < 750; seed += 1) {
     const state = startRun(seed);
     const route = ["extract", "fabricate", "defend"] as const;
@@ -531,18 +636,9 @@ test("the guided first wave reaches its first upgrade in 20 to 25 seconds across
         desired = route[state.tutorialStep as 0 | 1 | 2];
         if (!state.transits.length && getCurrentSector(state) !== desired) rotateRelay(state);
       } else if (selectedForPulse !== state.totalPulses) {
-        const affinity = state.pulseQueue[0] ?? "extract";
-        const nearest = state.enemies.reduce(
-          (progress, enemy) => Math.max(progress, enemy.progress),
-          0,
-        );
-        if (state.enemies.length && state.ammo >= 0.5 && nearest > 0.4) {
+        if (state.enemies.length && state.ammo >= 0.5) {
           desired = "defend";
-        } else if (getCircuitLoadForecast(state, affinity).canReceive) {
-          desired = affinity;
-        } else if (state.enemies.length && state.ammo >= 0.5) {
-          desired = "defend";
-        } else if (state.ore >= 0.5 && state.ammo < 12) {
+        } else if (state.ore >= 0.5 && state.ammo < 6) {
           desired = "fabricate";
         } else {
           desired = "extract";
@@ -559,8 +655,8 @@ test("the guided first wave reaches its first upgrade in 20 to 25 seconds across
       advanceGame(state, 1 / 120);
     }
     assert.equal(state.phase, "upgrade", `seed ${seed}`);
-    assert.ok(state.clock >= 20 && state.clock <= 25, `seed ${seed}: ${state.clock.toFixed(2)}s`);
-    assert.deepEqual(state.upgradeChoices, ["lean-press", "rail-coil", "arc-fork"]);
+    assert.ok(state.clock >= 20 && state.clock <= 30, `seed ${seed}: ${state.clock.toFixed(2)}s`);
+    assert.deepEqual(state.upgradeChoices, ["reinforced-bit", "lean-press", "rail-coil"]);
   }
 });
 
@@ -609,7 +705,7 @@ test("defense with no target arms standby without failing or spending ammo", () 
 
   assert.equal(state.ammo, 9, "standby must not consume ammunition");
   assert.equal(state.validPulses, 0, "standby is neutral rather than productive");
-  assert.equal(state.score, 25, "only the visible frequency-match bonus is retained");
+  assert.equal(state.score, 0, "wave one has no hidden frequency score bonus");
   assert.equal(state.sectorEffect?.sector, "defend");
   assert.equal(state.sectorEffect?.amount, 0);
   assert.equal(state.sectorEffect?.cause, undefined, "standby has no failure cause");
@@ -725,6 +821,8 @@ test("scrap recovery exposes its conditional activation", () => {
 
 test("defense forecast aggregates a visible arriving pack", () => {
   const state = startRun(760);
+  state.upgrades = ["reinforced-bit", "lean-press"];
+  state.ammo = 20;
   state.enemies = Array.from({ length: 4 }, (_, index) => ({
     id: 100 + index,
     kind: "rusher" as const,
@@ -745,7 +843,8 @@ test("defense forecast aggregates a visible arriving pack", () => {
   assert.equal(forecast?.threatCount, 4);
   assert.equal(forecast?.totalHp, 40);
   assert.equal(forecast?.breachDamage, 4);
-  assert.equal(forecast?.defensePulsesRequired, 4);
+  assert.equal(forecast?.ammoRequired, 10, "extract and fabricate modules improve round damage");
+  assert.equal(forecast?.defensePulsesRequired, 2, "each defense pulse may spend six rounds");
 });
 
 test("a breach at zero integrity ends the run exactly once", () => {

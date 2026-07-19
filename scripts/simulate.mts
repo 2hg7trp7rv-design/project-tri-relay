@@ -3,6 +3,7 @@ import {
   createGameState,
   getCircuitLoadForecast,
   getCurrentSector,
+  getDefenseForecast,
   rotateRelay,
   selectUpgrade,
   startRun,
@@ -11,7 +12,7 @@ import { SECTORS, type GameState, type Sector } from "../app/game/model.ts";
 
 const TICK = 1 / 120;
 const MAX_SECONDS = 480;
-const SIMULATION_RUNS = Math.max(40, Math.min(5000, Number(process.env.SIMULATION_RUNS ?? 200)));
+const SIMULATION_RUNS = Math.max(500, Math.min(5000, Number(process.env.SIMULATION_RUNS ?? 1000)));
 const SIMULATION_CORE_INTEGRITY = Number(process.env.SIMULATION_CORE_INTEGRITY ?? 0);
 const SKIP_EXHAUSTIVE_AUDIT = process.env.SIMULATION_SKIP_EXHAUSTIVE === "1";
 const EXHAUSTIVE_CYCLE_SEEDS = Math.max(
@@ -23,58 +24,119 @@ const EXHAUSTIVE_CYCLE_PULSES = Math.max(
   Math.min(96, Number(process.env.EXHAUSTIVE_CYCLE_PULSES ?? 24)),
 );
 const LEGACY_FIXED_CYCLE = ["extract", "extract", "fabricate", "defend"] as const;
-type SimulationPolicy = "adaptive" | "fixed" | "affinity" | "affinity-valid";
+type SimulationPolicy =
+  | "heat-aware"
+  | "old-ui-recommendation"
+  | "simple-threshold"
+  | "fixed"
+  | "affinity"
+  | "affinity-valid";
+type BuildPlan = "mixed" | "extract" | "fabricate" | "defend";
 
-const upgradePriority = [
-  "rail-coil",
-  "lean-press",
-  "arc-fork",
-  "reinforced-bit",
-  "loaded-capacitor",
-  "double-chamber",
-  "interdictor",
-  "scrap-recovery",
-  "vein-memory",
-  "fracture-counter",
-  "resonant-mold",
-  "resonant-drill",
-];
+const upgradePriorities: Record<BuildPlan, readonly string[]> = {
+  mixed: [
+    "rail-coil",
+    "lean-press",
+    "arc-fork",
+    "reinforced-bit",
+    "loaded-capacitor",
+    "double-chamber",
+    "interdictor",
+    "scrap-recovery",
+    "vein-memory",
+    "fracture-counter",
+    "resonant-mold",
+    "resonant-drill",
+  ],
+  extract: [
+    "reinforced-bit",
+    "resonant-drill",
+    "vein-memory",
+    "fracture-counter",
+    "rail-coil",
+    "lean-press",
+    "arc-fork",
+    "loaded-capacitor",
+    "double-chamber",
+    "interdictor",
+    "scrap-recovery",
+    "resonant-mold",
+  ],
+  fabricate: [
+    "lean-press",
+    "resonant-mold",
+    "double-chamber",
+    "scrap-recovery",
+    "rail-coil",
+    "reinforced-bit",
+    "arc-fork",
+    "loaded-capacitor",
+    "interdictor",
+    "vein-memory",
+    "fracture-counter",
+    "resonant-drill",
+  ],
+  defend: [
+    "rail-coil",
+    "arc-fork",
+    "loaded-capacitor",
+    "interdictor",
+    "lean-press",
+    "reinforced-bit",
+    "double-chamber",
+    "scrap-recovery",
+    "vein-memory",
+    "fracture-counter",
+    "resonant-mold",
+    "resonant-drill",
+  ],
+};
 
-function greedyTarget(state: GameState): Sector {
-  const nearest = state.enemies.reduce((value, enemy) => Math.max(value, enemy.progress), 0);
-  const enemyHp = state.enemies.reduce((value, enemy) => value + enemy.hp, 0);
+function heatAwareTarget(state: GameState): Sector {
+  const base = oldUiRecommendationTarget(state);
+  const baseForecast = getCircuitLoadForecast(state, base);
+  const defense = getDefenseForecast(state);
+  if (base === "defend" && defense && defense.etaSeconds <= 4.5) return base;
+  if (baseForecast.canReceive && baseForecast.outputMultiplier >= 0.85) return base;
+
   const affinity = state.pulseQueue[0] ?? "extract";
-  const scores: Record<Sector, number> = {
-    extract:
-      state.ore >= 23.5
-        ? -1000
-        : 8 + (24 - state.ore) * 0.9 + (state.ore < 6 ? 16 : 0),
-    fabricate:
-      state.ore < 0.5 || state.ammo >= 19.5
-        ? -1000
-        : 9 + (20 - state.ammo) * 1.15 + (state.ammo < 7 ? 18 : 0),
-    defend:
-      !state.enemies.length || state.ammo < 0.5
-        ? -1000
-        : 8 + enemyHp * 0.24 + nearest * 42 + (nearest > 0.48 ? 28 : 0),
-  };
-
-  for (const sector of ["extract", "fabricate", "defend"] as const) {
+  const scores: Record<Sector, number> = { extract: -1000, fabricate: -1000, defend: -1000 };
+  for (const sector of SECTORS) {
     const forecast = getCircuitLoadForecast(state, sector);
-    scores[sector] *= forecast.outputMultiplier;
-    if (sector === affinity) scores[sector] += 26;
-    if (forecast.willOverload) scores[sector] -= 24;
-    if (forecast.overdrive) scores[sector] += sector === "defend" ? 34 : 22;
+    if (!forecast.canReceive) continue;
+    scores[sector] = forecast.outputMultiplier * 50;
+    if (sector === affinity) scores[sector] += 18;
+    if (forecast.urgent) scores[sector] += 20;
+    if (forecast.overdrive) scores[sector] += sector === "defend" ? 30 : 18;
+    if (sector === base) scores[sector] += 12;
+    if (sector === "extract") scores[sector] += (24 - state.ore) * 0.35;
+    if (sector === "fabricate") scores[sector] += (20 - state.ammo) * 0.45;
+    if (sector === "defend") {
+      scores[sector] += state.enemies.reduce((sum, enemy) => sum + enemy.hp, 0) * 0.08;
+    }
   }
-
-  // A breach is worse than accepting one forecast overload. This is an
-  // explicit emergency rule, not privileged information unavailable to a
-  // player: enemy distance and ammunition are both visible.
-  if (state.enemies.length && state.ammo >= 0.5 && nearest > 0.74) return "defend";
-
   return (["extract", "fabricate", "defend"] as const).reduce((best, sector) =>
     scores[sector] > scores[best] ? sector : best,
   );
+}
+
+/** The exact post-tutorial recommendation removed from v0.4's player UI. */
+function oldUiRecommendationTarget(state: GameState): Sector {
+  const defense = getDefenseForecast(state);
+  if (defense && defense.etaSeconds <= 4.5 && state.ammo >= 1) return "defend";
+  if (state.ammo < 4 && state.ore >= 2) return "fabricate";
+  if (state.ore < 8) return "extract";
+  return state.pulseQueue[0] ?? "extract";
+}
+
+function simpleThresholdTarget(state: GameState): Sector {
+  const nearest = state.enemies.reduce((value, enemy) => Math.max(value, enemy.progress), 0);
+  if (state.enemies.length && state.ammo >= 0.5 && nearest > 0.53) {
+    return "defend";
+  }
+  if (state.ore >= 0.5 && state.ammo < 4.5) return "fabricate";
+  if (state.ore < 8) return "extract";
+  return state.pulseQueue[0] ?? "extract";
 }
 
 function affinityFirstTarget(state: GameState): Sector {
@@ -90,12 +152,15 @@ function affinityFirstTarget(state: GameState): Sector {
 }
 
 function fixedTarget(pulse: number, cycle: readonly Sector[]): Sector {
-  return cycle[pulse % cycle.length];
+  // The three guided pulses are not part of the player's repeated policy.
+  // Phase zero begins with the first unguided decision.
+  return cycle[Math.max(0, pulse - 3) % cycle.length];
 }
 
 function run(
   seed: number,
   policy: SimulationPolicy,
+  buildPlan: BuildPlan = "mixed",
   fixedCycle: readonly Sector[] = LEGACY_FIXED_CYCLE,
 ) {
   const state = startRun(seed);
@@ -119,7 +184,9 @@ function run(
   };
   for (let ticks = 0; ticks < MAX_SECONDS / TICK; ticks += 1) {
     if (state.phase === "upgrade") {
-      const selected = upgradePriority.find((id) => state.upgradeChoices.includes(id)) ?? state.upgradeChoices[0];
+      const selected =
+        upgradePriorities[buildPlan].find((id) => state.upgradeChoices.includes(id)) ??
+        state.upgradeChoices[0];
       if (selected) selectUpgrade(state, selected);
     }
     if (state.phase === "playing") {
@@ -129,8 +196,12 @@ function run(
       } else {
         if (chosenForPulse !== state.totalPulses) {
           desired =
-            policy === "adaptive"
-              ? greedyTarget(state)
+            policy === "heat-aware"
+              ? heatAwareTarget(state)
+              : policy === "old-ui-recommendation"
+                ? oldUiRecommendationTarget(state)
+                : policy === "simple-threshold"
+                  ? simpleThresholdTarget(state)
               : policy === "affinity-valid"
                 ? affinityFirstTarget(state)
               : policy === "affinity"
@@ -176,6 +247,7 @@ function run(
     endingOre: state.ore,
     endingAmmo: state.ammo,
     endingWardenHp: state.enemies.find((enemy) => enemy.kind === "warden")?.hp ?? 0,
+    durationSeconds: state.clock,
     measuredPulses,
     matchedPulses,
     overloadPulses,
@@ -197,9 +269,13 @@ function wilsonInterval(successes: number, total: number) {
   return [Math.max(0, center - margin), Math.min(1, center + margin)];
 }
 
-function reportFullRun(policy: SimulationPolicy) {
-  const results = Array.from({ length: SIMULATION_RUNS }, (_, index) => run(1000 + index, policy));
+function reportFullRun(policy: SimulationPolicy, buildPlan: BuildPlan = "mixed") {
+  const results = Array.from(
+    { length: SIMULATION_RUNS },
+    (_, index) => run(1000 + index, policy, buildPlan),
+  );
   const wins = results.filter((result) => result.won).length;
+  const winningResults = results.filter((result) => result.won);
   const average = (
     key:
       | "wave"
@@ -209,7 +285,9 @@ function reportFullRun(policy: SimulationPolicy) {
       | "overloads"
       | "endingOre"
       | "endingAmmo"
-      | "endingWardenHp",
+      | "endingWardenHp"
+      | "durationSeconds"
+      | "pulses",
   ) =>
     results.reduce((sum, result) => sum + result[key], 0) / results.length;
   const sum = (
@@ -229,6 +307,7 @@ function reportFullRun(policy: SimulationPolicy) {
     results.reduce((total, result) => total + result.urgentMismatchCounts[sector], 0);
   const summary = {
     policy,
+    buildPlan,
     runs: SIMULATION_RUNS,
     coreIntegrity: results[0]?.maxIntegrity ?? 0,
     wins,
@@ -242,6 +321,16 @@ function reportFullRun(policy: SimulationPolicy) {
     averageEndingOre: average("endingOre"),
     averageEndingAmmo: average("endingAmmo"),
     averageEndingWardenHp: average("endingWardenHp"),
+    averageDurationSeconds: average("durationSeconds"),
+    averagePulses: average("pulses"),
+    averageWinningDurationSeconds: winningResults.length
+      ? winningResults.reduce((sum, result) => sum + result.durationSeconds, 0) /
+        winningResults.length
+      : null,
+    averageWinningPulses: winningResults.length
+      ? winningResults.reduce((sum, result) => sum + result.pulses, 0) /
+        winningResults.length
+      : null,
     sectorShare: {
       extract: routeTotal("extract") / pulses,
       fabricate: routeTotal("fabricate") / pulses,
@@ -269,6 +358,7 @@ function reportFullRun(policy: SimulationPolicy) {
 function measureLoadEfficiency(seed: number, cycle: readonly Sector[] | null) {
   const state = createGameState(seed);
   state.phase = "playing";
+  state.waveIndex = 2;
   state.tutorialStep = 3;
   state.spawnSchedule = [{ at: 999, kind: "rusher" }];
   state.spawnCursor = 0;
@@ -313,11 +403,27 @@ function measureLoadEfficiency(seed: number, cycle: readonly Sector[] | null) {
   };
 }
 
-function forEachFixedCycle(length: number, visit: (cycle: readonly Sector[]) => void) {
+function forEachPrimitiveCycle(length: number, visit: (cycle: readonly Sector[]) => void) {
   const cycle = Array<Sector>(length);
   const walk = (index: number) => {
     if (index === length) {
-      visit(cycle);
+      const hasShorterPeriod = Array.from(
+        { length: Math.max(0, length - 1) },
+        (_, periodIndex) => periodIndex + 1,
+      ).some(
+        (period) =>
+          length % period === 0 &&
+          cycle.every((sector, cycleIndex) => sector === cycle[cycleIndex % period]),
+      );
+      if (hasShorterPeriod) return;
+      const phases = cycle.map((_, offset) => [
+        ...cycle.slice(offset),
+        ...cycle.slice(0, offset),
+      ]);
+      const normalized = phases.reduce((best, phase) =>
+        phase.join(">") < best.join(">") ? phase : best,
+      );
+      if (cycle.join(">") === normalized.join(">")) visit([...cycle]);
       return;
     }
     for (const sector of SECTORS) {
@@ -339,36 +445,40 @@ function auditEveryFixedCycle() {
   ) / seeds.length;
   let totalCycles = 0;
   let globalBest = 0;
-  const topFixedCycles: Array<{ cycle: Sector[]; efficiency: number }> = [];
-  for (let length = 2; length <= 8; length += 1) {
+  const screenedCycles: Array<{ cycle: Sector[]; efficiency: number }> = [];
+  for (let length = 1; length <= 8; length += 1) {
     let cycleCount = 0;
     let bestEfficiency = 0;
     let bestCycle: Sector[] = [];
     let bestOverloadRate = 0;
     let bestMatchRate = 0;
-    forEachFixedCycle(length, (cycle) => {
+    forEachPrimitiveCycle(length, (cycle) => {
       cycleCount += 1;
-      const aggregate = seeds.reduce(
-        (sum, seed) => {
-          const metric = measureLoadEfficiency(seed, cycle);
-          return {
-            retainedOutput: sum.retainedOutput + metric.retainedOutput,
-            overloadRate: sum.overloadRate + metric.overloadRate,
-            matchRate: sum.matchRate + metric.matchRate,
-          };
-        },
-        { retainedOutput: 0, overloadRate: 0, matchRate: 0 },
+      const phaseMetrics = cycle.map((_, offset) => {
+        const phase = [...cycle.slice(offset), ...cycle.slice(0, offset)];
+        const aggregate = seeds.reduce(
+          (sum, seed) => {
+            const metric = measureLoadEfficiency(seed, phase);
+            return {
+              retainedOutput: sum.retainedOutput + metric.retainedOutput,
+              overloadRate: sum.overloadRate + metric.overloadRate,
+              matchRate: sum.matchRate + metric.matchRate,
+            };
+          },
+          { retainedOutput: 0, overloadRate: 0, matchRate: 0 },
+        );
+        return { phase, aggregate };
+      });
+      const { phase, aggregate } = phaseMetrics.reduce((best, candidate) =>
+        candidate.aggregate.retainedOutput > best.aggregate.retainedOutput
+          ? candidate
+          : best,
       );
       const efficiency = aggregate.retainedOutput / seeds.length;
-      const key = cycle.join(">");
-      if (!topFixedCycles.some((candidate) => candidate.cycle.join(">") === key)) {
-        topFixedCycles.push({ cycle: [...cycle], efficiency });
-        topFixedCycles.sort((a, b) => b.efficiency - a.efficiency);
-        topFixedCycles.length = Math.min(topFixedCycles.length, 8);
-      }
+      screenedCycles.push({ cycle: phase, efficiency });
       if (efficiency > bestEfficiency) {
         bestEfficiency = efficiency;
-        bestCycle = [...cycle];
+        bestCycle = phase;
         bestOverloadRate = aggregate.overloadRate / seeds.length;
         bestMatchRate = aggregate.matchRate / seeds.length;
       }
@@ -390,7 +500,7 @@ function auditEveryFixedCycle() {
   }
   console.log(JSON.stringify({
     audit: "fixed-cycle-load-summary",
-    lengths: "2-8",
+    lengths: "1-8",
     totalCycles,
     seeds: seeds.length,
     adaptiveEfficiency: adaptive,
@@ -398,16 +508,62 @@ function auditEveryFixedCycle() {
     minimumGap: adaptive - globalBest,
     passed: globalBest <= adaptive - 0.08,
   }));
+  if (totalCycles !== 1_318) process.exitCode = 1;
   if (globalBest > adaptive - 0.08) process.exitCode = 1;
 
-  // The exhaustive pulse-level screen is cheap enough to cover all 9,837
-  // cycles. Then challenge the real six-wave game with its eight strongest
-  // survivors; this catches a lower-output pattern that might still exploit
-  // enemy timing or stockpile thresholds.
+  // The primitive, phase-normalized screen covers every unique cycle once.
+  // A short, disjoint full-run screen promotes 137 adversarial candidates.
+  // This catches lower-output cycles that can still exploit wave timing or
+  // stockpile thresholds; the promoted candidates then face 80 fresh seeds.
+  const preScreenRuns = 2;
+  const challengers = screenedCycles
+    .map((candidate) => {
+      const phases = candidate.cycle.map((_, offset) => [
+        ...candidate.cycle.slice(offset),
+        ...candidate.cycle.slice(0, offset),
+      ]);
+      const buildScreens = phases
+        .flatMap((phase) =>
+          (["mixed", "extract", "fabricate", "defend"] as const).map((buildPlan) => {
+            const results = Array.from(
+              { length: preScreenRuns },
+              (_, index) => run(11000 + index, "fixed", buildPlan, phase),
+            );
+            return {
+              phase,
+              buildPlan,
+              wins: results.filter((result) => result.won).length,
+              wave: results.reduce((sum, result) => sum + result.wave, 0) / results.length,
+              score: results.reduce((sum, result) => sum + result.score, 0) / results.length,
+            };
+          }),
+        )
+        .sort(
+          (a, b) =>
+            b.wins - a.wins || b.wave - a.wave || b.score - a.score,
+        );
+      const bestBuild = buildScreens[0];
+      return {
+        ...candidate,
+        cycle: bestBuild.phase,
+        buildPlan: bestBuild.buildPlan,
+        preScreenWins: bestBuild.wins,
+        preScreenWave: bestBuild.wave,
+        preScreenScore: bestBuild.score,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.preScreenWins - a.preScreenWins ||
+        b.preScreenWave - a.preScreenWave ||
+        b.preScreenScore - a.preScreenScore ||
+        b.efficiency - a.efficiency,
+    )
+    .slice(0, 137);
   const challengeRuns = Math.min(80, SIMULATION_RUNS);
   const adaptiveResults = Array.from(
     { length: challengeRuns },
-    (_, index) => run(12000 + index, "adaptive"),
+      (_, index) => run(12000 + index, "heat-aware"),
   );
   const adaptiveWins = adaptiveResults.filter((result) => result.won).length;
   const averageResult = (
@@ -417,10 +573,11 @@ function auditEveryFixedCycle() {
   let bestFixedWinRate = -1;
   let bestFixedScore = -1;
   let bestFixedWinningCycle: Sector[] = [];
-  for (const candidate of topFixedCycles) {
+  let bestFixedBuildPlan: BuildPlan = "mixed";
+  for (const candidate of challengers) {
     const results = Array.from(
       { length: challengeRuns },
-      (_, index) => run(12000 + index, "fixed", candidate.cycle),
+      (_, index) => run(12000 + index, "fixed", candidate.buildPlan, candidate.cycle),
     );
     const wins = results.filter((result) => result.won).length;
     const winRate = wins / challengeRuns;
@@ -429,11 +586,15 @@ function auditEveryFixedCycle() {
       bestFixedWinRate = winRate;
       bestFixedScore = averageScore;
       bestFixedWinningCycle = candidate.cycle;
+      bestFixedBuildPlan = candidate.buildPlan;
     }
     console.log(JSON.stringify({
       audit: "fixed-cycle-full-run-challenge",
       cycle: candidate.cycle,
+      buildPlan: candidate.buildPlan,
       screenedEfficiency: candidate.efficiency,
+      preScreenRuns,
+      preScreenWins: candidate.preScreenWins,
       runs: challengeRuns,
       wins,
       winRate,
@@ -445,7 +606,7 @@ function auditEveryFixedCycle() {
   const adaptiveWinRate = adaptiveWins / challengeRuns;
   console.log(JSON.stringify({
     audit: "fixed-cycle-full-run-summary",
-    challengers: topFixedCycles.length,
+    challengers: challengers.length,
     runsPerPolicy: challengeRuns,
     adaptiveWinRate,
     adaptiveAverageWave: averageResult(adaptiveResults, "wave"),
@@ -454,47 +615,77 @@ function auditEveryFixedCycle() {
     bestFixedWinRate,
     bestFixedAverageScore: Math.round(bestFixedScore),
     bestFixedWinningCycle,
+    bestFixedBuildPlan,
     gap: adaptiveWinRate - bestFixedWinRate,
     passed: bestFixedWinRate <= adaptiveWinRate - 0.2,
   }));
   if (bestFixedWinRate > adaptiveWinRate - 0.2) process.exitCode = 1;
 }
 
-const adaptiveSummary = reportFullRun("adaptive");
+const onlyPolicy = process.env.SIMULATION_ONLY_POLICY as SimulationPolicy | undefined;
+if (onlyPolicy) {
+  reportFullRun(onlyPolicy);
+} else {
+const heatAwareSummary = reportFullRun("heat-aware");
+const oldUiSummary = reportFullRun("old-ui-recommendation");
+const simpleSummary = reportFullRun("simple-threshold");
 reportFullRun("fixed");
 const affinitySummary = reportFullRun("affinity");
 const affinityValidSummary = reportFullRun("affinity-valid");
-const adversarialGap = adaptiveSummary.winRate - affinitySummary.winRate;
-const scoreGap = adaptiveSummary.averageScore - affinitySummary.averageScore;
-const fallbackGap = adaptiveSummary.winRate - affinityValidSummary.winRate;
-const fallbackScoreGap =
-  adaptiveSummary.averageScore - affinityValidSummary.averageScore;
-const fallbackGapBasisPoints = Math.round(fallbackGap * 10_000);
-const adversarialPassed =
+const extractBuildSummary = reportFullRun("heat-aware", "extract");
+const fabricateBuildSummary = reportFullRun("heat-aware", "fabricate");
+const defendBuildSummary = reportFullRun("heat-aware", "defend");
+
+const adversarialGap = heatAwareSummary.winRate - affinitySummary.winRate;
+const oldUiGap = heatAwareSummary.winRate - oldUiSummary.winRate;
+const fallbackGap = heatAwareSummary.winRate - affinityValidSummary.winRate;
+const routingGatePassed =
+  SIMULATION_RUNS >= 500 &&
+  heatAwareSummary.winRate >= 0.5 &&
   affinitySummary.winRate <= 0.5 &&
   adversarialGap >= 0.2 &&
-  scoreGap >= 10_000 &&
-  fallbackGapBasisPoints >= 1_000 &&
-  fallbackScoreGap >= 1_500 &&
-  adaptiveSummary.urgentMismatchRate >= 0.03 &&
-  adaptiveSummary.urgentOverrideShare >= 0.25;
+  oldUiGap >= 0.03 &&
+  simpleSummary.winRate <= 0.2 &&
+  fallbackGap >= 0.05 &&
+  heatAwareSummary.urgentMismatchRate >= 0.03 &&
+  heatAwareSummary.urgentOverrideShare >= 0.25;
 console.log(JSON.stringify({
-  audit: "affinity-autopilot",
-  adaptiveWinRate: adaptiveSummary.winRate,
+  audit: "routing-policy-gate",
+  runs: SIMULATION_RUNS,
+  heatAwareWinRate: heatAwareSummary.winRate,
+  oldUiRecommendationWinRate: oldUiSummary.winRate,
+  oldUiGap,
+  simpleThresholdWinRate: simpleSummary.winRate,
   affinityWinRate: affinitySummary.winRate,
-  winRateGap: adversarialGap,
-  adaptiveAverageScore: adaptiveSummary.averageScore,
-  affinityAverageScore: affinitySummary.averageScore,
-  scoreGap,
+  affinityGap: adversarialGap,
   affinityValidWinRate: affinityValidSummary.winRate,
-  affinityValidAverageScore: affinityValidSummary.averageScore,
-  affinityValidWinRateGap: fallbackGap,
-  affinityValidWinRateGapBasisPoints: fallbackGapBasisPoints,
-  affinityValidScoreGap: fallbackScoreGap,
-  affinitySectorShare: affinitySummary.sectorShare,
-  adaptiveUrgentMismatchRate: adaptiveSummary.urgentMismatchRate,
-  adaptiveUrgentOverrideShare: adaptiveSummary.urgentOverrideShare,
-  passed: adversarialPassed,
+  affinityValidGap: fallbackGap,
+  heatAwareUrgentMismatchRate: heatAwareSummary.urgentMismatchRate,
+  heatAwareUrgentOverrideShare: heatAwareSummary.urgentOverrideShare,
+  passed: routingGatePassed,
 }));
-if (!adversarialPassed) process.exitCode = 1;
+if (!routingGatePassed) process.exitCode = 1;
+
+const specialistBuilds = [
+  extractBuildSummary,
+  fabricateBuildSummary,
+  defendBuildSummary,
+];
+const lowestBuildWinRate = Math.min(...specialistBuilds.map((summary) => summary.winRate));
+const highestBuildWinRate = Math.max(...specialistBuilds.map((summary) => summary.winRate));
+const buildSpread = highestBuildWinRate - lowestBuildWinRate;
+const buildGatePassed =
+  SIMULATION_RUNS >= 500 && lowestBuildWinRate >= 0.2 && buildSpread <= 0.1;
+console.log(JSON.stringify({
+  audit: "build-viability-gate",
+  runsPerBuild: SIMULATION_RUNS,
+  extractWinRate: extractBuildSummary.winRate,
+  fabricateWinRate: fabricateBuildSummary.winRate,
+  defendWinRate: defendBuildSummary.winRate,
+  minimumWinRate: lowestBuildWinRate,
+  spread: buildSpread,
+  passed: buildGatePassed,
+}));
+if (!buildGatePassed) process.exitCode = 1;
 if (!SKIP_EXHAUSTIVE_AUDIT) auditEveryFixedCycle();
+}

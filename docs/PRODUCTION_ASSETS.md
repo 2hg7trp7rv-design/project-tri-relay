@@ -1,6 +1,6 @@
 # TRI RELAY: LAST SHIFT — production asset contract
 
-Status: v0.3 core-revalidation world plates implemented for portrait and landscape
+Status: v0.4 candidate; v03 portrait and landscape world plates remain unchanged from v0.3
 
 Owner: art direction + game design + frontend
 

@@ -1827,19 +1827,33 @@
   .bf-city { top: 12%; }
 
   .bf-machine {
-    width: 124px;
+    width: 132px;
     min-height: 62px;
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 5px;
   }
 
   .bf-machine[data-sector="defend"] { top: 24%; }
   .bf-machine[data-sector="fabricate"] { top: 46%; right: 1.5%; left: auto; }
   .bf-machine[data-sector="extract"] { top: 58%; left: 1.5%; }
-  .bf-machine-visual { width: 38px; height: 46px; }
-  .bf-machine .machine-glyph { width: 37px; height: 42px; }
+  .bf-machine-visual { width: 34px; height: 46px; }
+  .bf-machine .machine-glyph { width: 33px; height: 42px; }
+
+  .bf-machine-copy strong {
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: nowrap;
+    font-size: 12px;
+    letter-spacing: 0.01em;
+  }
+
+  .bf-machine-copy small {
+    white-space: nowrap;
+    font-size: 12px;
+  }
 
   .bf-machine[data-sector="defend"] {
-    width: 120px;
+    width: 132px;
     grid-template-columns: 32px minmax(0, 1fr);
   }
   .bf-machine[data-sector="defend"] .bf-machine-visual { width: 32px; }
@@ -1851,16 +1865,20 @@
     flex-direction: column;
     gap: 1px;
   }
+
+  .bf-threat-readout {
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding-inline: 5px;
+    font-size: 12px;
+  }
+
+  .bf-threat-readout > span { white-space: nowrap; }
 }
 
 @media (orientation: portrait) and (max-width: 350px) and (max-height: 650px) {
   .bf-event-strip {
-    top: auto;
-    bottom: calc(max(148px, 32%) - 44px);
-    min-height: 40px;
-    max-height: 44px;
-    overflow: hidden;
-    pointer-events: none;
+    display: none;
   }
   .bf-machine { min-height: 58px; }
   .bf-machine[data-sector="fabricate"] {

@@ -198,28 +198,28 @@ export const ENEMY_STATS: Record<
 > = {
   rusher: {
     hp: 10,
-    arrival: 11,
+    arrival: 16,
     breachDamage: 1,
     icon: "◆",
     name: { ja: "ラッシャー", en: "RUSHER" },
   },
   sapper: {
     hp: 18,
-    arrival: 18,
+    arrival: 27,
     breachDamage: 2,
     icon: "⬡",
     name: { ja: "サッパー", en: "SAPPER" },
   },
   jammer: {
     hp: 28,
-    arrival: 22,
+    arrival: 33,
     breachDamage: 2,
     icon: "✦",
     name: { ja: "ジャマー", en: "JAMMER" },
   },
   warden: {
-    hp: 375,
-    arrival: 50,
+    hp: 430,
+    arrival: 72,
     breachDamage: 6,
     icon: "◉",
     name: { ja: "グリッド・ウォーデン", en: "GRID WARDEN" },
@@ -231,12 +231,12 @@ export const WAVES: WaveDefinition[] = [
     minimumDuration: 20,
     enemyHpScale: 0.8,
     jitter: 0,
-    interval: 1.1,
+    interval: 1.8,
     title: { ja: "最初の灯", en: "FIRST LIGHT" },
     spawns: [0, 6, 12, 18].map((at) => ({ at, kind: "rusher" })),
   },
   {
-    interval: 1.08,
+    interval: 1.72,
     title: { ja: "資源略奪", en: "RESOURCE RAID" },
     spawns: [
       ...[0, 6, 12, 19, 27, 33].map((at) => ({ at, kind: "rusher" as const })),
@@ -244,7 +244,7 @@ export const WAVES: WaveDefinition[] = [
     ],
   },
   {
-    interval: 1.05,
+    interval: 1.65,
     title: { ja: "回路妨害", en: "CIRCUIT DENIAL" },
     spawns: [
       ...[0, 6, 12, 20, 28, 36].map((at) => ({ at, kind: "rusher" as const })),
@@ -253,7 +253,7 @@ export const WAVES: WaveDefinition[] = [
     ],
   },
   {
-    interval: 1.02,
+    interval: 1.58,
     title: { ja: "複合侵攻", en: "COMBINED ASSAULT" },
     spawns: [
       ...[0, 5, 10, 16, 23, 30, 35, 38].map((at) => ({ at, kind: "rusher" as const })),
@@ -262,7 +262,7 @@ export const WAVES: WaveDefinition[] = [
     ],
   },
   {
-    interval: 0.98,
+    interval: 1.5,
     title: { ja: "限界圧力", en: "REDLINE" },
     spawns: [
       ...[0, 5, 10, 15, 21, 28, 34, 40].map((at) => ({ at, kind: "rusher" as const })),
@@ -271,7 +271,7 @@ export const WAVES: WaveDefinition[] = [
     ],
   },
   {
-    interval: 0.94,
+    interval: 1.45,
     title: { ja: "最終監視者", en: "THE LAST WARDEN" },
     spawns: [
       { at: 0, kind: "warden" },
@@ -287,7 +287,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "extract",
     icon: "⬢",
     name: { ja: "強化ビット", en: "REINFORCED BIT" },
-    description: { ja: "採掘の基礎出力を1増やす", en: "+1 base ore per extraction" },
+    description: { ja: "採掘の基礎出力+1、弾薬威力+22%", en: "+1 base ore; manufactured rounds +22% damage" },
     value: "+1 ORE",
   },
   {
@@ -295,7 +295,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "extract",
     icon: "⌁",
     name: { ja: "共振ドリル", en: "RESONANT DRILL" },
-    description: { ja: "周波数一致時の採掘出力を1.5倍から2倍へ", en: "Raise matched extraction from 1.5× to 2×" },
+    description: { ja: "採掘の周波数一致を2倍、弾薬威力+22%", en: "Matched extraction 2×; manufactured rounds +22% damage" },
     value: "MATCH ×2.0",
   },
   {
@@ -303,7 +303,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "extract",
     icon: "◇",
     name: { ja: "鉱脈記憶", en: "VEIN MEMORY" },
-    description: { ja: "採掘を2回休むと次の採掘に鉱石4追加", en: "+4 ore after skipping extraction twice" },
+    description: { ja: "採掘を2回休むと鉱石+4、弾薬威力+22%", en: "+4 ore after resting extraction twice; rounds +22% damage" },
     value: "+4 ORE",
   },
   {
@@ -311,7 +311,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "extract",
     icon: "✣",
     name: { ja: "破砕カウンター", en: "FRACTURE COUNTER" },
-    description: { ja: "4回目ごとの採掘に鉱石7追加", en: "Every 4th extraction gains +7 ore" },
+    description: { ja: "4回目の採掘に鉱石+7、弾薬威力+22%", en: "Every 4th extraction +7 ore; rounds +22% damage" },
     value: "4TH +7",
   },
   {
@@ -319,7 +319,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "fabricate",
     icon: "▤",
     name: { ja: "高効率プレス", en: "LEAN PRESS" },
-    description: { ja: "1回の製造で鉱石を25%多く弾薬へ変える", en: "Forge 25% more ammo from every batch" },
+    description: { ja: "製造量+25%、弾薬威力+18%", en: "+25% forge yield; manufactured rounds +18% damage" },
     value: "×1.25 YIELD",
   },
   {
@@ -327,7 +327,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "fabricate",
     icon: "⌬",
     name: { ja: "共振金型", en: "RESONANT MOLD" },
-    description: { ja: "周波数一致時の製造出力を1.5倍から2倍へ", en: "Raise matched fabrication from 1.5× to 2×" },
+    description: { ja: "製造の周波数一致を2倍、弾薬威力+18%", en: "Matched fabrication 2×; manufactured rounds +18% damage" },
     value: "MATCH ×2.0",
   },
   {
@@ -335,7 +335,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "fabricate",
     icon: "▥",
     name: { ja: "二重装填室", en: "DOUBLE CHAMBER" },
-    description: { ja: "鉱石8以上なら8を使い弾薬10を一括製造", en: "Spend 8 ore to forge 10 ammo" },
+    description: { ja: "鉱石8から弾薬10を製造、弾薬威力+18%", en: "Forge 10 ammo from 8 ore; manufactured rounds +18% damage" },
     value: "8 → 10",
   },
   {
@@ -343,7 +343,7 @@ export const UPGRADES: UpgradeDefinition[] = [
     branch: "fabricate",
     icon: "↺",
     name: { ja: "端材回収", en: "SCRAP RECOVERY" },
-    description: { ja: "鉱石4以上を使った製造後に鉱石2を回収", en: "Recover 2 ore after a large batch" },
+    description: { ja: "大量製造後に鉱石2回収、弾薬威力+18%", en: "Recover 2 ore after a large batch; rounds +18% damage" },
     value: "+2 RETURN",
   },
   {

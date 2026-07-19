@@ -20,6 +20,13 @@ const AMMO_CAP = 20;
 const TRANSIT_SECONDS = 0.18;
 const INPUT_LOCK_SECONDS = 0.075;
 const RUSHER_PACK_SIZE = [1, 3, 3, 4, 4, 4] as const;
+const OVERDRIVE_MULTIPLIER: Record<Sector, number> = {
+  extract: 3,
+  fabricate: 1.75,
+  defend: 1.67,
+};
+const EXTRACT_MODULE_DAMAGE_BONUS = 0.22;
+const FABRICATE_MODULE_DAMAGE_BONUS = 0.18;
 
 // Circuit load is pulse-based rather than time-based, so its outcome remains
 // identical at every refresh rate. The upcoming affinity is already visible to
@@ -256,6 +263,37 @@ function hasUpgrade(state: GameState, id: string) {
   return state.upgrades.includes(id);
 }
 
+function countBranchUpgrades(state: GameState, branch: Sector) {
+  return state.upgrades.reduce((count, id) => {
+    const upgrade = UPGRADES.find((candidate) => candidate.id === id);
+    return count + (upgrade?.branch === branch ? 1 : 0);
+  }, 0);
+}
+
+/**
+ * Mining and fabrication modules improve the ammunition supply chain, not just
+ * the machine they are installed on. The forecast and resolved shot must use
+ * this same value so the player is never shown a different combat outcome.
+ */
+function getDamagePerAmmo(state: GameState) {
+  const extractMultiplier =
+    1 + countBranchUpgrades(state, "extract") * EXTRACT_MODULE_DAMAGE_BONUS;
+  const fabricateMultiplier =
+    1 + countBranchUpgrades(state, "fabricate") * FABRICATE_MODULE_DAMAGE_BONUS;
+  const defenseMultiplier = hasUpgrade(state, "rail-coil") ? 1.25 : 1;
+  return round(3 * extractMultiplier * fabricateMultiplier * defenseMultiplier, 4);
+}
+
+/** Wave one teaches only the resource chain. Frequency starts in wave two. */
+export function isResonanceEnabled(state: Pick<GameState, "waveIndex">) {
+  return state.waveIndex >= 1;
+}
+
+/** Visible circuit load is introduced in wave three. */
+export function isCircuitLoadEnabled(state: Pick<GameState, "waveIndex">) {
+  return state.waveIndex >= 2;
+}
+
 function mostUsedSector(state: GameState, sampleSize: number): Sector {
   const counts: Record<Sector, number> = { extract: 0, fabricate: 0, defend: 0 };
   state.routeLog.slice(-sampleSize).forEach((sector) => {
@@ -431,7 +469,6 @@ function damageSecondTarget(state: GameState, damage: number, events: EngineEven
 function resolveExtract(
   state: GameState,
   multiplier: number,
-  overdrive: boolean,
   events: EngineEvent[],
 ) {
   const rested = state.pulsesSinceExtract >= 2;
@@ -442,7 +479,7 @@ function resolveExtract(
   let base = hasUpgrade(state, "reinforced-bit") ? 5 : 4;
   if (veinTriggered) base += 4;
   if (fractureTriggered) base += 7;
-  const requested = overdrive ? Math.max(12, round(base * multiplier)) : round(base * multiplier);
+  const requested = round(base * multiplier);
   const added = round(Math.min(requested, ORE_CAP - state.ore));
   state.ore = round(state.ore + added);
   state.sectorEffect = {
@@ -468,7 +505,6 @@ function resolveExtract(
 function resolveFabricate(
   state: GameState,
   multiplier: number,
-  overdrive: boolean,
   events: EngineEvent[],
 ) {
   state.pulsesSinceExtract += 1;
@@ -489,10 +525,7 @@ function resolveFabricate(
   let spend: number;
   let generated: number;
   const doubleChamberTriggered = hasUpgrade(state, "double-chamber") && state.ore >= 8;
-  if (overdrive) {
-    spend = Math.min(8, state.ore);
-    generated = 14;
-  } else if (doubleChamberTriggered) {
+  if (doubleChamberTriggered) {
     spend = 8;
     const ratio = hasUpgrade(state, "lean-press") ? 1.25 : 1;
     generated = 10 * ratio * multiplier;
@@ -526,7 +559,6 @@ function resolveFabricate(
 function resolveDefense(
   state: GameState,
   multiplier: number,
-  overdrive: boolean,
   events: EngineEvent[],
 ) {
   state.pulsesSinceExtract += 1;
@@ -560,10 +592,10 @@ function resolveDefense(
 
   const ammoBefore = state.ammo;
   const killsBefore = state.kills;
-  const spend = Math.min(4, state.ammo);
+  const spend = Math.min(6, state.ammo);
   state.ammo = round(state.ammo - spend);
-  const damagePerAmmo = hasUpgrade(state, "rail-coil") ? 3.75 : 3;
-  let requestedDamage = overdrive ? 30 : spend * damagePerAmmo * multiplier;
+  const damagePerAmmo = getDamagePerAmmo(state);
+  let requestedDamage = spend * damagePerAmmo * multiplier;
   const loadedCapacitorTriggered = hasUpgrade(state, "loaded-capacitor") && ammoBefore >= 12;
   if (loadedCapacitorTriggered) requestedDamage *= 1.5;
 
@@ -620,9 +652,9 @@ function resolveDefense(
 function resolveTransit(state: GameState, pulseId: number, events: EngineEvent[]) {
   const pulse = state.transits.find((candidate) => candidate.id === pulseId);
   if (!pulse) return;
-  if (pulse.sector === "extract") resolveExtract(state, pulse.multiplier, pulse.overdrive, events);
-  if (pulse.sector === "fabricate") resolveFabricate(state, pulse.multiplier, pulse.overdrive, events);
-  if (pulse.sector === "defend") resolveDefense(state, pulse.multiplier, pulse.overdrive, events);
+  if (pulse.sector === "extract") resolveExtract(state, pulse.multiplier, events);
+  if (pulse.sector === "fabricate") resolveFabricate(state, pulse.multiplier, events);
+  if (pulse.sector === "defend") resolveDefense(state, pulse.multiplier, events);
 }
 
 function affinityBonus(state: GameState, sector: Sector, affinity: Sector) {
@@ -701,22 +733,27 @@ function isUrgentCircuitDemand(state: GameState, sector: Sector) {
  */
 function buildCircuitLoadForecast(state: GameState, sector: Sector, affinity: Sector) {
   const heat = ensureCircuitHeat(state)[sector];
-  const matched = affinity === sector;
+  const resonanceEnabled = isResonanceEnabled(state);
+  const loadEnabled = isCircuitLoadEnabled(state);
+  const matched = resonanceEnabled && affinity === sector;
   const jammed = isSectorJammed(state, sector);
   const canReceive = targetCanReceivePulse(state, sector);
-  const urgent = isUrgentCircuitDemand(state, sector);
+  const urgent = loadEnabled && isUrgentCircuitDemand(state, sector);
   const overdrive =
+    resonanceEnabled &&
     state.resonance >= 3 &&
     targetCanUseOverdrive(state, sector) &&
     !jammed;
-  const projectedHeat = projectedCircuitHeat(
-    heat,
-    matched,
-    canReceive,
-    jammed,
-    overdrive,
-    urgent,
-  );
+  const projectedHeat = loadEnabled
+    ? projectedCircuitHeat(
+        heat,
+        matched,
+        canReceive,
+        jammed,
+        overdrive,
+        urgent,
+      )
+    : heat;
   const status = circuitLoadStatus(heat);
   const projectedStatus = circuitLoadStatus(projectedHeat);
   return {
@@ -732,7 +769,7 @@ function buildCircuitLoadForecast(state: GameState, sector: Sector, affinity: Se
     canReceive,
     urgent,
     overdrive,
-    outputMultiplier: overdrive
+    outputMultiplier: !loadEnabled || overdrive
       ? 1
       : circuitLoadMultiplier(projectedStatus) *
         (urgent && !matched && canReceive && !jammed
@@ -749,6 +786,7 @@ export function getCircuitLoadForecast(state: GameState, sector: Sector) {
 function applyCircuitLoad(state: GameState, sector: Sector, affinity: Sector) {
   const heat = ensureCircuitHeat(state);
   const forecast = buildCircuitLoadForecast(state, sector, affinity);
+  if (!isCircuitLoadEnabled(state)) return forecast;
   SECTORS.forEach((candidate) => {
     heat[candidate] = candidate === sector
       ? forecast.projectedHeat
@@ -762,12 +800,15 @@ function dispatchPulse(state: GameState, events: EngineEvent[]) {
   const affinity = state.pulseQueue.shift() ?? "extract";
   refillPulseQueue(state);
   const sector = getCurrentSector(state);
-  const matched = sector === affinity;
+  const resonanceEnabled = isResonanceEnabled(state);
+  const matched = resonanceEnabled && sector === affinity;
   const jammed = isSectorJammed(state, sector);
   const targetCanReceive = targetCanReceivePulse(state, sector);
   const load = applyCircuitLoad(state, sector, affinity);
   const overdrive = load.overdrive;
-  if (overdrive) {
+  if (!resonanceEnabled) {
+    state.resonance = 0;
+  } else if (overdrive) {
     state.resonance = 0;
     state.overdrives += 1;
   } else if (matched && targetCanReceive && !jammed) {
@@ -780,11 +821,13 @@ function dispatchPulse(state: GameState, events: EngineEvent[]) {
     // rationally override affinity without becoming a hidden punishment.
     state.resonance -= 1;
   }
-  let multiplier = 1 + affinityBonus(state, sector, affinity);
-  multiplier =
-    Math.min(2, multiplier) *
-    (overdrive ? 1 : load.outputMultiplier) *
-    (jammed ? 0.5 : 1);
+  let multiplier = overdrive
+    ? OVERDRIVE_MULTIPLIER[sector]
+    : Math.min(
+        2,
+        1 + (resonanceEnabled ? affinityBonus(state, sector, affinity) : 0),
+      ) * load.outputMultiplier;
+  multiplier *= jammed ? 0.5 : 1;
   multiplier = round(multiplier);
 
   state.transits.push({
@@ -825,7 +868,7 @@ function dispatchPulse(state: GameState, events: EngineEvent[]) {
 
 function chooseUpgradeCandidates(state: GameState) {
   if (state.waveIndex === 0 && state.upgrades.length === 0) {
-    state.upgradeChoices = ["lean-press", "rail-coil", "arc-fork"];
+    state.upgradeChoices = ["reinforced-bit", "lean-press", "rail-coil"];
     return;
   }
   const available = UPGRADES.filter((upgrade) => !state.upgrades.includes(upgrade.id));
@@ -968,9 +1011,9 @@ export function getDefenseForecast(state: GameState) {
   const threatWindow = approaching.filter((item) => item.etaSeconds <= primary.etaSeconds + 2.5);
   const totalHp = threatWindow.reduce((sum, item) => sum + item.enemy.hp, 0);
   const totalBreachDamage = threatWindow.reduce((sum, item) => sum + item.enemy.breachDamage, 0);
-  const damagePerAmmo = hasUpgrade(state, "rail-coil") ? 3.75 : 3;
+  const damagePerAmmo = getDamagePerAmmo(state);
   const loadedMultiplier = hasUpgrade(state, "loaded-capacitor") && state.ammo >= 12 ? 1.5 : 1;
-  const damagePerPulse = 4 * damagePerAmmo * loadedMultiplier;
+  const damagePerPulse = 6 * damagePerAmmo * loadedMultiplier;
   const ammoRequired = Math.max(1, Math.ceil(totalHp / (damagePerAmmo * loadedMultiplier)));
   return {
     enemy: primary.enemy,

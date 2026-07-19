@@ -66,6 +66,17 @@ for (const relativePath of expectedMetadata) {
       const message = `${relativePath} awaits organization art/legal approval`;
       if (commercial) failures.push(message);
       else warnings.push(message);
+    } else if (
+      typeof metadata.approver_name !== "string"
+      || metadata.approver_name.trim() === ""
+      || typeof metadata.approver_role !== "string"
+      || metadata.approver_role.trim() === ""
+      || typeof metadata.approval_date !== "string"
+      || !/^\d{4}-\d{2}-\d{2}$/.test(metadata.approval_date)
+    ) {
+      const message = `${relativePath} is marked approved without approver_name, approver_role, and YYYY-MM-DD approval_date`;
+      if (commercial) failures.push(message);
+      else warnings.push(message);
     }
   } catch (error) {
     failures.push(`${relativePath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -73,7 +84,7 @@ for (const relativePath of expectedMetadata) {
 }
 
 console.log(JSON.stringify({
-  mode: commercial ? "commercial" : "technical-candidate",
+  mode: commercial ? "commercial-asset-approval" : "artifact-policy",
   publicFiles: publicFiles.length,
   publicBytes,
   provenanceRecords: metadataFiles.length,

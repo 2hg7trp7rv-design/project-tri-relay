@@ -1,6 +1,11 @@
 # Repository handoff
 
-This archive is intentionally direct-root: `package.json`, `app/`, `public/`, and the other project files sit at the ZIP root. It contains source and owned project binaries, but not Git history, installed dependencies, build output, or machine caches.
+The GitHub repository is the v0.4 source of truth. If an archive is explicitly
+generated from the exact release commit, it must be direct-root: `package.json`,
+`app/`, `public/`, and the other project files sit at the ZIP root. Such an
+archive contains source and owned project binaries, but not Git history,
+installed dependencies, build output, or machine caches. An older adjacent ZIP
+must not be relabelled or treated as the v0.4 delivery.
 
 ## Upload to a new GitHub repository
 
@@ -40,6 +45,14 @@ the project dashboard. Make the GitHub Actions `verify` job a required check on
 named art/legal/brand approval in every media metadata file, and require
 `npm run check:commercial` to pass.
 
-This archive is the v0.3 core-revalidation build, not a Basic Launch candidate.
+The exact GitHub release commit is the v0.4 core-revalidation build, not a Basic
+Launch candidate.
 Complete the first-time human-test gates in `docs/RELEASE_CHECKLIST.md` before
 expanding the run or submitting it to a distribution portal.
+
+The v0.4 evidence build adds strict Active Run v4 validation, tutorial-state
+migration, anonymous playtest evidence, staged W1/W2/W3 rules, evidence-only
+debriefs, and a desired-state CrazyGames bridge. It intentionally does not
+change any bundled raster, video, audio, or font binary. Use
+`docs/V04_PLAYTEST_PROTOCOL.md` for the next new-player test; do not treat
+automated strategy results as proof of fun.

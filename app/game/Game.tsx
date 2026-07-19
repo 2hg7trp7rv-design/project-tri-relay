@@ -22,6 +22,8 @@ import {
   getPulseProgress,
   getWaveReadout,
   getWaveProgress,
+  isCircuitLoadEnabled,
+  isResonanceEnabled,
   pauseGame,
   resumeGame,
   rotateRelay,
@@ -40,34 +42,26 @@ import {
   type Sector,
 } from "./model";
 import { PlatformBridge } from "./platform";
+import { getRunDebrief } from "./debrief";
+import {
+  DEFAULT_PROFILE,
+  PROFILE_KEY,
+  safeReadActiveRun,
+  safeReadProfile,
+  safeWriteActiveRun,
+  safeWriteProfile,
+  type Profile,
+} from "./persistence";
+import {
+  RunEvidenceTracker,
+  type RunEvidenceResult,
+  type RunStartSource,
+} from "./playtest-metrics";
 import { CityGate, EnemyGlyph, MachineGlyph, RelayDial, WorldStateOverlay } from "./production-visuals";
 import { UiIcon } from "./ui-icons";
 import { trackGameEvent } from "./telemetry";
 
 type Language = "ja" | "en";
-
-interface Profile {
-  version: 1;
-  runs: number;
-  wins: number;
-  bestWave: number;
-  bestScore: number;
-  muted: boolean;
-  language: Language;
-}
-
-const PROFILE_KEY = "tri-relay-profile-v1";
-const ACTIVE_RUN_KEY = "tri-relay-active-run-v3";
-const LEGACY_ACTIVE_RUN_KEY = "tri-relay-active-run-v2";
-const DEFAULT_PROFILE: Profile = {
-  version: 1,
-  runs: 0,
-  wins: 0,
-  bestWave: 0,
-  bestScore: 0,
-  muted: false,
-  language: "ja",
-};
 
 const INITIAL_GAME_STATE = createGameState(0x57a17);
 
@@ -79,6 +73,7 @@ const TEXT = {
     premise: "タップで送電先を切り替える。採掘で鉱石を得て、製造で弾薬を作り、防衛で敵を止める。",
     start: "シフト開始",
     startGuided: "操作説明つきで開始",
+    skipTutorial: "操作説明をスキップして開始",
     replay: "もう一度挑戦",
     continue: "復帰する",
     paused: "送電停止中",
@@ -123,7 +118,7 @@ const TEXT = {
       "② 製造へつなぐ",
       "③ 防衛へつなぐ",
     ],
-    affinityHelp: "次の周波数と同じ色へ合わせると出力1.5倍。空の設備へ送ると出力は失われる。",
+    affinityHelp: "次の周波数と同じ色へ合わせると出力が上昇する。空の設備へ送ると出力は失われる。",
     contact: "接触まで",
     nextThreat: "次の侵攻",
     breach: "突破被害",
@@ -156,7 +151,7 @@ const TEXT = {
     commandExtract: "鉱石を得る — 採掘へ切り替える",
     commandMatch: "次の周波数に合わせる",
     nextPulseShort: "次パルス",
-    matchBonus: "色一致 ×1.5",
+    matchBonus: "色一致・出力上昇",
     sent: "へ送電",
     oreResource: "鉱石",
     ammoResource: "弾薬",
@@ -175,6 +170,7 @@ const TEXT = {
       warden: "監視者",
     },
     frontline: "都市防衛線",
+    battlefield: "戦場",
     training: "操作訓練",
     resultWave: "到達ウェーブ",
     resultKills: "撃破数",
@@ -195,6 +191,14 @@ const TEXT = {
     cooling: "冷却",
     overloadWarning: "次で過負荷",
     priorityRelief: "緊急需要・負荷軽減",
+    evidence: "このランの記録",
+    activeTime: "アクティブ時間",
+    firstKillTime: "初撃破",
+    rotationsPerSecond: "1秒あたり切替",
+    productiveRate: "有効送電率",
+    debrief: "記録から分かること",
+    seconds: "秒",
+    noRecord: "—",
   },
   en: {
     titleKicker: "THE FALLEN CITY // FINAL SHIFT",
@@ -203,6 +207,7 @@ const TEXT = {
     premise: "Tap to switch the power route. Extract ore, fabricate ammunition, then defend the city.",
     start: "START SHIFT",
     startGuided: "START WITH TUTORIAL",
+    skipTutorial: "START WITHOUT TUTORIAL",
     replay: "RUN IT AGAIN",
     continue: "RESUME GRID",
     paused: "GRID SUSPENDED",
@@ -247,7 +252,7 @@ const TEXT = {
       "2. CONNECT FABRICATION",
       "3. CONNECT DEFENSE",
     ],
-    affinityHelp: "Match the next frequency color for 1.5× output. Routing into an empty machine wastes the pulse.",
+    affinityHelp: "Matching the next frequency color boosts output. Routing into an empty machine wastes the pulse.",
     contact: "CONTACT IN",
     nextThreat: "NEXT INCURSION",
     breach: "BREACH DAMAGE",
@@ -280,7 +285,7 @@ const TEXT = {
     commandExtract: "GET ORE — SWITCH TO EXTRACTION",
     commandMatch: "MATCH THE NEXT FREQUENCY",
     nextPulseShort: "NEXT PULSE",
-    matchBonus: "COLOR MATCH ×1.5",
+    matchBonus: "COLOR MATCH · OUTPUT BOOST",
     sent: "POWER ROUTED TO",
     oreResource: "ORE",
     ammoResource: "AMMO",
@@ -299,6 +304,7 @@ const TEXT = {
       warden: "WARDEN",
     },
     frontline: "CITY FRONTLINE",
+    battlefield: "BATTLEFIELD",
     training: "ROUTE TRAINING",
     resultWave: "WAVE REACHED",
     resultKills: "HOSTILES CLEARED",
@@ -319,6 +325,14 @@ const TEXT = {
     cooling: "COOLING",
     overloadWarning: "OVERLOAD NEXT",
     priorityRelief: "PRIORITY RELIEF",
+    evidence: "RUN EVIDENCE",
+    activeTime: "ACTIVE TIME",
+    firstKillTime: "FIRST KILL",
+    rotationsPerSecond: "ROTATIONS / SEC",
+    productiveRate: "PRODUCTIVE RATE",
+    debrief: "WHAT THE RECORD SHOWS",
+    seconds: "s",
+    noRecord: "—",
   },
 } as const;
 
@@ -418,148 +432,12 @@ function localizeEngineNotice(text: string, language: Language) {
   return text;
 }
 
-function safeReadProfile(): Profile {
-  if (typeof window === "undefined") return DEFAULT_PROFILE;
-  try {
-    const raw = window.localStorage.getItem(PROFILE_KEY);
-    if (!raw) return DEFAULT_PROFILE;
-    const parsed = JSON.parse(raw) as Partial<Profile>;
-    return {
-      version: 1,
-      runs: Number.isFinite(parsed.runs) ? Math.max(0, Math.min(9999, Number(parsed.runs))) : 0,
-      wins: Number.isFinite(parsed.wins) ? Math.max(0, Math.min(9999, Number(parsed.wins))) : 0,
-      bestWave: Number.isFinite(parsed.bestWave)
-        ? Math.max(0, Math.min(WAVES.length, Number(parsed.bestWave)))
-        : 0,
-      bestScore: Number.isFinite(parsed.bestScore)
-        ? Math.max(0, Math.min(99999999, Number(parsed.bestScore)))
-        : 0,
-      muted: Boolean(parsed.muted),
-      language: parsed.language === "en" ? "en" : "ja",
-    };
-  } catch {
-    return DEFAULT_PROFILE;
-  }
-}
-
-function safeWriteProfile(profile: Profile) {
-  try {
-    window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  } catch {
-    // The game remains playable when storage is blocked or full.
-  }
-}
-
-function safeReadActiveRun(): GameState | null {
-  if (typeof window === "undefined") return null;
-  const reject = () => {
-    try {
-      window.localStorage.removeItem(ACTIVE_RUN_KEY);
-    } catch {
-      // Storage may be unavailable in a private or embedded browser context.
-    }
-    return null;
-  };
-  try {
-    // v0.3 changes pulse generation, city durability, resonance and circuit
-    // load. Resuming a v0.2 checkpoint would create a mixed-rule run, so only
-    // the active run is retired; the long-lived profile remains intact.
-    window.localStorage.removeItem(LEGACY_ACTIVE_RUN_KEY);
-    const raw = window.localStorage.getItem(ACTIVE_RUN_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { version?: number; savedAt?: number; state?: GameState };
-    if (parsed.version !== 3 || !parsed.state || !Number.isFinite(parsed.savedAt)) return reject();
-    if (Date.now() - Number(parsed.savedAt) > 12 * 60 * 60 * 1000) {
-      return reject();
-    }
-    const state = parsed.state;
-    if (!["playing", "intermission", "upgrade", "paused"].includes(state.phase)) return reject();
-    if (state.phase === "paused" && !["playing", "intermission"].includes(state.phaseBeforePause)) return reject();
-    const requiredArrays = [
-      state.pulseQueue,
-      state.transits,
-      state.spawnSchedule,
-      state.enemies,
-      state.jams,
-      state.routeLog,
-      state.upgrades,
-      state.upgradeChoices,
-      state.notices,
-    ];
-    if (requiredArrays.some((value) => !Array.isArray(value))) return reject();
-    const finiteValues = [
-      state.clock,
-      state.relayIndex,
-      state.pulseElapsed,
-      state.pulseInterval,
-      state.ore,
-      state.ammo,
-      state.integrity,
-      state.maxIntegrity,
-      state.waveIndex,
-      state.waveElapsed,
-      state.spawnCursor,
-      state.intermissionLeft,
-      state.score,
-      state.kills,
-      state.totalPulses,
-      state.validPulses,
-      state.resonance,
-      state.overdrives,
-      state.tutorialStep,
-      state.nextId,
-      state.rng,
-    ];
-    if (finiteValues.some((value) => !Number.isFinite(value))) return reject();
-    if (!Number.isInteger(state.relayIndex) || state.relayIndex < 0 || state.relayIndex >= SECTORS.length) return reject();
-    if (!Number.isInteger(state.tutorialStep) || state.tutorialStep < 0 || state.tutorialStep > 3) return reject();
-    if (!Number.isInteger(state.waveIndex) || state.waveIndex < 0 || state.waveIndex >= WAVES.length) return reject();
-    if (state.ore < 0 || state.ore > GAME_LIMITS.ore || state.ammo < 0 || state.ammo > GAME_LIMITS.ammo) return reject();
-    if (state.integrity < 0 || state.maxIntegrity < 1 || state.integrity > state.maxIntegrity) return reject();
-    if (state.resonance < 0 || state.resonance > 3 || state.overdrives < 0) return reject();
-    if (!state.circuitHeat) return reject();
-    const heatValues = SECTORS.map((sector) => state.circuitHeat[sector]);
-    if (heatValues.some((value) => !Number.isFinite(value) || value < 0 || value > 100)) return reject();
-    if (!Number.isFinite(state.overloads) || state.overloads < 0) return reject();
-    if (state.pulseQueue.some((sector) => !SECTORS.includes(sector))) return reject();
-    if (state.transits.some((pulse) =>
-      !pulse
-      || !SECTORS.includes(pulse.sector)
-      || !SECTORS.includes(pulse.affinity)
-      || !Number.isFinite(pulse.progress)
-      || !Number.isFinite(pulse.loadMultiplier)
-      || !Number.isFinite(pulse.heatAfter)
-      || typeof pulse.overdrive !== "boolean"
-      || typeof pulse.urgent !== "boolean"
-      || typeof pulse.targetReady !== "boolean"
-    )) return reject();
-    if (state.enemies.some((enemy) => !enemy || !(enemy.kind in ENEMY_STATS) || !Number.isFinite(enemy.hp) || !Number.isFinite(enemy.progress))) return reject();
-    const restored = cloneGameState(parsed.state);
-    if (restored.phase === "playing" || restored.phase === "intermission") {
-      restored.phaseBeforePause = restored.phase;
-      restored.phase = "paused";
-    }
-    return restored;
-  } catch {
-    return reject();
-  }
-}
-
-function safeWriteActiveRun(state: GameState | null) {
-  if (typeof window === "undefined") return;
-  try {
-    if (!state || !["playing", "intermission", "upgrade", "paused"].includes(state.phase)) {
-      window.localStorage.removeItem(ACTIVE_RUN_KEY);
-      return;
-    }
-    window.localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify({ version: 3, savedAt: Date.now(), state }));
-  } catch {
-    // A blocked or full storage area must never interrupt the simulation.
-  }
-}
-
 function formatNumber(value: number) {
   return value.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: value % 1 ? 1 : 0 });
+}
+
+function formatAmmoForecast(value: number) {
+  return value > GAME_LIMITS.ammo ? `${GAME_LIMITS.ammo}+` : formatNumber(value);
 }
 
 function sectorStyle(sector: Sector) {
@@ -584,16 +462,21 @@ function circuitClass(state: GameState, sector: Sector, recommended: Sector | nu
 export default function Game() {
   const stateRef = useRef<GameState>(cloneGameState(INITIAL_GAME_STATE));
   const audioRef = useRef<AudioDirector>(new AudioDirector());
-  const platformRef = useRef<PlatformBridge>(new PlatformBridge());
+  const platformRef = useRef<PlatformBridge | null>(null);
   const endCommittedRef = useRef(false);
   const guidedRunRef = useRef(false);
   const tutorialTrackedRef = useRef(false);
+  const initializationCompleteRef = useRef(false);
+  const evidenceRef = useRef<RunEvidenceTracker | null>(null);
+  const evidenceFrameAtRef = useRef<number | null>(null);
   const [view, setView] = useState<GameState>(() => cloneGameState(INITIAL_GAME_STATE));
+  const [resultEvidence, setResultEvidence] = useState<RunEvidenceResult | null>(null);
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [language, setLanguage] = useState<Language>("ja");
   const [muted, setMuted] = useState(false);
   const [platformMuted, setPlatformMuted] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const t = TEXT[language];
   const modalOpen = ["ready", "upgrade", "paused", "won", "lost"].includes(view.phase);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -604,6 +487,7 @@ export default function Game() {
   const mobileRelayRef = useRef<HTMLButtonElement | null>(null);
   const pauseRef = useRef<HTMLButtonElement | null>(null);
   const lastCheckpointClockRef = useRef(0);
+  const lastCheckpointEvidenceRef = useRef(0);
 
   const trapModalFocus = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
@@ -632,10 +516,16 @@ export default function Game() {
 
   const syncView = useCallback((forceCheckpoint = false) => {
     const snapshot = cloneGameState(stateRef.current);
+    const evidence = evidenceRef.current?.snapshot() ?? null;
     setView(snapshot);
-    if (forceCheckpoint || snapshot.clock - lastCheckpointClockRef.current >= 2) {
-      safeWriteActiveRun(snapshot);
+    if (
+      forceCheckpoint
+      || snapshot.clock - lastCheckpointClockRef.current >= 2
+      || (evidence?.activeSeconds ?? 0) - lastCheckpointEvidenceRef.current >= 2
+    ) {
+      safeWriteActiveRun(snapshot, evidence);
       lastCheckpointClockRef.current = snapshot.clock;
+      lastCheckpointEvidenceRef.current = evidence?.activeSeconds ?? 0;
     }
   }, []);
 
@@ -656,7 +546,7 @@ export default function Game() {
       });
     }
     if (events.some((event) => event.kind === "wave" || event.kind === "win" || event.kind === "lose")) {
-      platformRef.current.gameplayStop();
+      platformRef.current?.gameplayStop();
     }
     if (typeof navigator !== "undefined" && "vibrate" in navigator) {
       if (events.some((event) => event.kind === "breach")) navigator.vibrate?.(35);
@@ -673,30 +563,49 @@ export default function Game() {
     });
   }, []);
 
-  const beginRun = useCallback(() => {
+  const beginRun = useCallback((source: "opening" | "replay", guidedOverride?: boolean) => {
+    if (!initializationCompleteRef.current) return;
+    const phase = stateRef.current.phase;
+    if (source === "opening" ? phase !== "ready" : !["won", "lost"].includes(phase)) return;
     audioRef.current?.unlock();
     const seed = ((Date.now() & 0xffffffff) ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
-    const guided = profile.runs === 0;
+    const guided = guidedOverride ?? !profile.tutorialCompleted;
     guidedRunRef.current = guided;
     tutorialTrackedRef.current = false;
     stateRef.current = startRun(seed, guided);
-    trackGameEvent("run_started", { guided });
-    safeWriteActiveRun(stateRef.current);
+    const evidenceSource: RunStartSource = source === "replay" ? "replay" : "start";
+    evidenceRef.current = new RunEvidenceTracker({
+      source: evidenceSource,
+      runOrdinal: profile.runs + 1,
+      guided,
+    });
+    evidenceFrameAtRef.current = performance.now();
+    setResultEvidence(null);
+    trackGameEvent("run_started", { guided, source });
+    safeWriteActiveRun(stateRef.current, evidenceRef.current.snapshot());
     lastCheckpointClockRef.current = 0;
+    lastCheckpointEvidenceRef.current = 0;
     endCommittedRef.current = false;
     audioRef.current?.setMuted(muted || platformMuted);
     audioRef.current?.startDrone();
-    void platformRef.current.init().then(() => platformRef.current.gameplayStart());
-    updateProfile((current) => ({ ...current, runs: current.runs + 1 }));
+    platformRef.current?.gameplayStart();
+    updateProfile((current) => ({
+      ...current,
+      runs: current.runs + 1,
+      tutorialCompleted: current.tutorialCompleted || !guided,
+    }));
     playEvents([{ kind: "upgrade", amount: 1 }]);
     syncView(true);
-  }, [muted, platformMuted, playEvents, profile.runs, syncView, updateProfile]);
+  }, [muted, platformMuted, playEvents, profile.runs, profile.tutorialCompleted, syncView, updateProfile]);
 
   const rotate = useCallback(() => {
     audioRef.current?.unlock();
     const events = rotateRelay(stateRef.current);
     playEvents(events);
-    if (events.length) syncView();
+    if (events.length) {
+      evidenceRef.current?.recordRotation();
+      syncView();
+    }
   }, [playEvents, syncView]);
 
   const togglePause = useCallback(() => {
@@ -705,11 +614,11 @@ export default function Game() {
       audioRef.current?.unlock();
       if (resumeGame(state)) {
         audioRef.current?.startDrone();
-        void platformRef.current.init().then(() => platformRef.current.gameplayStart());
+        platformRef.current?.gameplayStart();
       }
     } else if (pauseGame(state)) {
       audioRef.current?.suspend();
-      platformRef.current.gameplayStop();
+      platformRef.current?.gameplayStop();
     }
     syncView(true);
   }, [syncView]);
@@ -726,7 +635,7 @@ export default function Game() {
           branch: upgrade?.branch ?? "unknown",
         });
         audioRef.current?.startDrone();
-        void platformRef.current.init().then(() => platformRef.current.gameplayStart());
+        platformRef.current?.gameplayStart();
         syncView(true);
       }
     },
@@ -752,8 +661,13 @@ export default function Game() {
   }, [updateProfile]);
 
   useEffect(() => {
-    platformRef.current.setMuteListener(setPlatformMuted);
-    void platformRef.current.init();
+    // React Strict Mode intentionally replays mount effects in development.
+    // Give each setup its own bridge so the cleanup probe cannot leave the
+    // next setup holding a permanently disposed SDK connection.
+    const platform = new PlatformBridge();
+    platformRef.current = platform;
+    platform.setMuteListener(setPlatformMuted);
+    void platform.init();
     let embedded = false;
     try {
       embedded = window.self !== window.top;
@@ -785,28 +699,45 @@ export default function Game() {
       setProfile(stored);
       setLanguage(initialLanguage);
       setMuted(stored.muted);
-      audioRef.current.setMuted(stored.muted || platformRef.current.isAudioMuted());
+      audioRef.current.setMuted(stored.muted || platform.isAudioMuted());
       setReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-      const restoredRun = safeReadActiveRun();
-      if (restoredRun) {
+      const restored = safeReadActiveRun();
+      if (restored) {
+        const restoredRun = restored.state;
+        const guided = restored.evidence?.guided ?? restoredRun.tutorialStep < 3;
+        evidenceRef.current = new RunEvidenceTracker({
+          source: "checkpoint",
+          runOrdinal: restored.evidence?.runOrdinal ?? Math.max(1, stored.runs),
+          guided,
+          snapshot: restored.evidence,
+        });
+        evidenceFrameAtRef.current = performance.now();
         stateRef.current = restoredRun;
         setView(cloneGameState(restoredRun));
+        setResultEvidence(null);
         lastCheckpointClockRef.current = restoredRun.clock;
-        guidedRunRef.current = restoredRun.tutorialStep < 3;
+        lastCheckpointEvidenceRef.current = restored.evidence?.activeSeconds ?? 0;
+        guidedRunRef.current = guided;
         tutorialTrackedRef.current = restoredRun.tutorialStep >= 3;
         trackGameEvent("checkpoint_restored", {
           wave: restoredRun.waveIndex + 1,
           phase: restoredRun.phase,
         });
       }
+      initializationCompleteRef.current = true;
+      setInitialized(true);
     });
-    return () => cancelAnimationFrame(animationFrame);
+    return () => {
+      initializationCompleteRef.current = false;
+      cancelAnimationFrame(animationFrame);
+      platform.gameplayStop();
+      platform.dispose();
+      if (platformRef.current === platform) platformRef.current = null;
+    };
   }, []);
 
   useEffect(() => () => {
     audioRef.current.dispose();
-    platformRef.current.gameplayStop();
-    platformRef.current.dispose();
   }, []);
 
   useEffect(() => {
@@ -876,8 +807,14 @@ export default function Game() {
     const simulationStep = 1 / 120;
 
     const frame = (now: number) => {
-      const elapsed = Math.max(0, Math.min((now - previous) / 1000, 0.25));
+      const rawElapsed = Math.max(0, (now - previous) / 1000);
+      const elapsed = Math.min(rawElapsed, 0.25);
       previous = now;
+      const evidencePrevious = evidenceFrameAtRef.current ?? now;
+      const evidenceElapsed = Math.max(0, (now - evidencePrevious) / 1000);
+      evidenceFrameAtRef.current = now;
+      const evidenceActive = !document.hidden
+        && (stateRef.current.phase === "playing" || stateRef.current.phase === "intermission");
       const simulationActive =
         stateRef.current.phase === "playing" || stateRef.current.phase === "intermission";
       const events: EngineEvent[] = [];
@@ -892,15 +829,16 @@ export default function Game() {
         simulationAccumulator = 0;
       }
       playEvents(events);
+      // Evidence uses unclamped foreground wall time. The simulation keeps its
+      // defensive clamp so a stalled render cannot fast-forward the game.
+      evidenceRef.current?.advance(evidenceElapsed, stateRef.current, events, evidenceActive);
       if (
         guidedRunRef.current &&
         !tutorialTrackedRef.current &&
         stateRef.current.tutorialStep >= 3
       ) {
         tutorialTrackedRef.current = true;
-        trackGameEvent("tutorial_completed", {
-          pulses: stateRef.current.totalPulses,
-        });
+        updateProfile((current) => ({ ...current, tutorialCompleted: true }));
       }
       renderAccumulator = simulationActive ? renderAccumulator + Math.min(elapsed, 0.05) : 0;
 
@@ -911,19 +849,15 @@ export default function Game() {
         endCommittedRef.current = true;
         audioRef.current?.stopDrone();
         const finalState = stateRef.current;
-        trackGameEvent("run_completed", {
-          outcome: finalState.phase === "won" ? "won" : "lost",
-          wave: finalState.waveIndex + 1,
-          score: Math.round(finalState.score),
-          overdrives: finalState.overdrives,
-        });
+        const evidence = evidenceRef.current?.complete(finalState) ?? null;
+        setResultEvidence(evidence);
         updateProfile((current) => ({
           ...current,
           wins: current.wins + (finalState.phase === "won" ? 1 : 0),
           bestWave: Math.max(current.bestWave, finalState.waveIndex + 1),
           bestScore: Math.max(current.bestScore, finalState.score),
         }));
-        safeWriteActiveRun(null);
+        safeWriteActiveRun(null, null);
       }
 
       if (events.length || (simulationActive && renderAccumulator >= 0.04)) {
@@ -948,22 +882,32 @@ export default function Game() {
 
   useEffect(() => {
     const suspendAndCheckpoint = () => {
+      // Lifecycle events can fire before the deferred restore frame (for
+      // example when a background tab is opened). Never let the untouched
+      // ready-state overwrite or delete an existing Active Run in that gap.
+      if (!initializationCompleteRef.current) return;
+      evidenceFrameAtRef.current = performance.now();
       pauseGame(stateRef.current);
       audioRef.current?.suspend();
-      platformRef.current.gameplayStop();
+      platformRef.current?.gameplayStop();
       syncView(true);
     };
 
     const resyncWithoutResuming = () => {
+      if (!initializationCompleteRef.current) return;
+      evidenceFrameAtRef.current = performance.now();
       // BFCache and Page Lifecycle restores retain in-memory state. Keep the
       // run explicitly paused until the player chooses to resume.
       pauseGame(stateRef.current);
       audioRef.current?.suspend();
-      platformRef.current.gameplayStop();
+      platformRef.current?.gameplayStop();
       syncView(true);
     };
 
     const handleVisibility = () => {
+      // Reset on both edges so a suspended rAF interval is never counted as
+      // active play when the document becomes visible again.
+      evidenceFrameAtRef.current = performance.now();
       if (document.hidden) suspendAndCheckpoint();
       else resyncWithoutResuming();
     };
@@ -1007,7 +951,8 @@ export default function Game() {
       if (isInteractiveTarget) return;
       if (event.code === "Space" || event.key === "Enter") {
         event.preventDefault();
-        if (phase === "ready" || phase === "won" || phase === "lost") beginRun();
+        if (phase === "ready") beginRun("opening");
+        else if (phase === "won" || phase === "lost") beginRun("replay", false);
         else if (phase === "paused") togglePause();
         else if (phase === "playing") rotate();
       }
@@ -1032,15 +977,11 @@ export default function Game() {
   const nextSpawnSeconds = nextSpawn ? Math.max(0, Math.ceil(nextSpawn.at - view.waveElapsed)) : null;
   const nextAffinity = view.pulseQueue[0] ?? "extract";
   const nextAfter = view.pulseQueue[1] ?? "fabricate";
+  const resonanceEnabled = isResonanceEnabled(view);
+  const circuitLoadEnabled = isCircuitLoadEnabled(view);
   const recommendedSector: Sector | null = tutorialStep < tutorialSequence.length
     ? tutorialSequence[tutorialStep as 0 | 1 | 2]
-    : defenseForecast && defenseForecast.etaSeconds <= 4.5 && view.ammo >= 1
-      ? "defend"
-      : view.ammo < 4 && view.ore >= 2
-        ? "fabricate"
-        : view.ore < 8
-          ? "extract"
-          : nextAffinity;
+    : null;
   const validRate = view.totalPulses ? Math.round((view.validPulses / view.totalPulses) * 100) : 100;
   const waveClockText = waveReadout.kind === "next"
     ? `${t.waveNext} +${waveReadout.seconds}s`
@@ -1065,7 +1006,7 @@ export default function Game() {
     .map(({ kind, count }) => `${ENEMY_STATS[kind].name[language]} ${count}`)
     .join(", ");
   const threatAnnouncement = defenseForecast
-    ? `${enemyRoster}. ${defenseForecast.threatCount} ${t.attacks}. ${t.breach} ${defenseForecast.breachDamage} CORE. AMMO ${defenseForecast.ammoRequired}`
+    ? `${enemyRoster}. ${defenseForecast.threatCount} ${t.attacks}. ${t.breach} ${defenseForecast.breachDamage} CORE. AMMO ${formatAmmoForecast(defenseForecast.ammoRequired)}`
     : view.enemies.length === 0 && nextSpawnSeconds !== null
       ? t.nextThreat
       : "";
@@ -1111,6 +1052,10 @@ export default function Game() {
   const latestUpgrade = view.upgrades.length
     ? UPGRADES.find((upgrade) => upgrade.id === view.upgrades[view.upgrades.length - 1]) ?? null
     : null;
+  const visibleEvidence = view.phase === "won" || view.phase === "lost" ? resultEvidence : null;
+  const debriefLines = view.phase === "won" || view.phase === "lost"
+    ? getRunDebrief(view, language, 2)
+    : [];
 
   const relayStyle = {
     "--relay-rotation": `${view.relayIndex * 120}deg`,
@@ -1156,8 +1101,15 @@ export default function Game() {
           <button type="button" onClick={toggleLanguage} aria-label={t.languageLabel} className="icon-button text-button">
             {t.language}
           </button>
-          <button type="button" onClick={toggleMute} aria-label={muted ? t.unmute : t.mute} aria-pressed={muted} className="icon-button sound-button">
-            <UiIcon name={muted ? "sound-off" : "sound-on"} className="ui-icon" />
+          <button
+            type="button"
+            onClick={toggleMute}
+            aria-label={muted || platformMuted ? t.unmute : t.mute}
+            aria-pressed={muted || platformMuted}
+            className="icon-button sound-button"
+            disabled={platformMuted}
+          >
+            <UiIcon name={muted || platformMuted ? "sound-off" : "sound-on"} className="ui-icon" />
           </button>
           <button
             ref={pauseRef}
@@ -1173,7 +1125,7 @@ export default function Game() {
       </header>
 
       <main className="game-stage">
-        <section className="network-field" aria-label="Tri relay grid">
+        <section className="network-field" aria-label={t.battlefield}>
           <div className="battlefield-mobile">
             <section className={`bf-front ${defenseForecast ? "has-threat" : ""}`} aria-label={t.frontline}>
               <div className="bf-front-heading">
@@ -1257,9 +1209,9 @@ export default function Game() {
 
               {defenseForecast && (
                 <div className="bf-threat-readout">
-                  <span>{t.hostiles} ×{defenseForecast.threatCount}</span>
-                  <span>{t.ammoResource} {defenseForecast.ammoRequired}</span>
-                  <span>{t.breach} −{defenseForecast.breachDamage}</span>
+                  <span>{language === "ja" ? "敵" : "ENEMY"} ×{defenseForecast.threatCount}</span>
+                  <span>{language === "ja" ? "弾" : "AMMO"} {formatAmmoForecast(defenseForecast.ammoRequired)}</span>
+                  <span>{language === "ja" ? "耐久" : "CORE"} −{defenseForecast.breachDamage}</span>
                 </div>
               )}
               <span className="sr-only" role="status" aria-live="polite">
@@ -1348,8 +1300,8 @@ export default function Game() {
                       data-active={currentSector === sector}
                       data-transmitting={transmitting}
                       data-recommended={recommendedSector === sector}
-                      data-load={loadForecast.status}
-                      data-next-load={loadForecast.projectedStatus}
+                      data-load={circuitLoadEnabled ? loadForecast.status : undefined}
+                      data-next-load={circuitLoadEnabled ? loadForecast.projectedStatus : undefined}
                       data-jam={jam}
                       data-modules={installedForSector.length}
                       style={sectorStyle(sector)}
@@ -1364,12 +1316,14 @@ export default function Game() {
                       <span className="bf-machine-copy">
                         <strong>{t.sector[sector]}</strong>
                         <small>{value}</small>
-                        <span className="bf-load-readout" aria-label={`${t.circuitLoad} ${Math.round(loadForecast.heat)}%`}>
-                          <span><i>{t.loadShort}</i><b>{Math.round(loadForecast.heat)}%</b></span>
-                          <i className="bf-load-meter" aria-hidden="true">
-                            <b style={{ width: `${loadForecast.heat}%` }} />
-                          </i>
-                        </span>
+                        {circuitLoadEnabled && (
+                          <span className="bf-load-readout" aria-label={`${t.circuitLoad} ${Math.round(loadForecast.heat)}%`}>
+                            <span><i>{t.loadShort}</i><b>{Math.round(loadForecast.heat)}%</b></span>
+                            <i className="bf-load-meter" aria-hidden="true">
+                              <b style={{ width: `${loadForecast.heat}%` }} />
+                            </i>
+                          </span>
+                        )}
                       </span>
                       {installedForSector.length > 0 && (
                         <span className="bf-module-rack" aria-label={`${t.installed} ${installedForSector.length}`}>
@@ -1394,26 +1348,30 @@ export default function Game() {
 
               <div className="bf-relay-deck">
                 <div className="bf-guidance-stack">
-                  <div className={`bf-guidance ${actionFailure ? "is-failure" : ""}`}>
+                  <div id="mobile-relay-guidance" className={`bf-guidance ${actionFailure ? "is-failure" : ""}`}>
                     {actionFailure ? (
                       <strong><UiIcon name="warning" className="ui-icon" />{actionFailure}</strong>
                     ) : tutorialCopy ? (
                       <strong><b>{tutorialStep + 1}/3</b>{tutorialCopy}</strong>
-                    ) : (
+                    ) : resonanceEnabled ? (
                       <span>
                         <b>{t.nextPulseShort}</b>
                         <i style={sectorStyle(nextAffinity)}><UiIcon name={nextAffinity} className="ui-icon" /> {t.sector[nextAffinity]}</i>
                         {nextAffinity === currentSector && <em>{t.matchBonus}</em>}
                       </span>
+                    ) : (
+                      <span><b>{t.flowResult}</b><i>{recentEffectText ?? t.waitingPulse}</i></span>
                     )}
                   </div>
-                  <div className={`bf-resonance ${view.resonance === 3 ? "is-ready" : ""}`} aria-label={`${t.resonance} ${view.resonance}/3`}>
-                    <span>{view.resonance === 3 ? t.overdriveReady : t.resonance}</span>
-                    <i className={view.resonance >= 1 ? "is-live" : ""} />
-                    <i className={view.resonance >= 2 ? "is-live" : ""} />
-                    <i className={view.resonance >= 3 ? "is-live" : ""} />
-                    <strong>{t.overdrive} ×{view.overdrives}</strong>
-                  </div>
+                  {resonanceEnabled && (
+                    <div className={`bf-resonance ${view.resonance === 3 ? "is-ready" : ""}`} aria-label={`${t.resonance} ${view.resonance}/3`}>
+                      <span>{view.resonance === 3 ? t.overdriveReady : t.resonance}</span>
+                      <i className={view.resonance >= 1 ? "is-live" : ""} />
+                      <i className={view.resonance >= 2 ? "is-live" : ""} />
+                      <i className={view.resonance >= 3 ? "is-live" : ""} />
+                      <strong>{t.overdrive} ×{view.overdrives}</strong>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -1424,6 +1382,9 @@ export default function Game() {
                   aria-label={language === "ja"
                     ? `タップすると送電先が${t.sector[currentSector]}から${t.sector[nextSector]}へ切り替わります`
                     : `Tap to switch the power route from ${t.sector[currentSector]} to ${t.sector[nextSector]}`}
+                  aria-describedby={circuitLoadEnabled
+                    ? "mobile-relay-guidance mobile-relay-load"
+                    : "mobile-relay-guidance"}
                   disabled={view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
                 >
                   <RelayDial sector={currentSector} pulseProgress={pulseProgress} />
@@ -1437,7 +1398,8 @@ export default function Game() {
                           ? t.active
                           : `${t.pulseIn} ${pulseSeconds.toFixed(1)}s`}
                     </span>
-                    <span className={`bf-load-forecast is-${selectedLoadForecast.projectedStatus}`}>
+                    {circuitLoadEnabled && (
+                    <span id="mobile-relay-load" className={`bf-load-forecast is-${selectedLoadForecast.projectedStatus}`}>
                       <b>
                         {selectedLoadForecast.willOverload
                           ? t.overloadWarning
@@ -1454,6 +1416,7 @@ export default function Game() {
                           : `${t.output} ${Math.round(selectedLoadForecast.outputMultiplier * 100)}%`}
                       </em>
                     </span>
+                    )}
                   </span>
                 </button>
               </div>
@@ -1494,8 +1457,8 @@ export default function Game() {
               {defenseForecast && (
                 <div>
                   <span className="threat-breach">{t.breach} −{defenseForecast.breachDamage} CORE</span>
-                  <span className="threat-demand">×{defenseForecast.threatCount} / {t.attacks} {defenseForecast.defensePulsesRequired}{t.shot} / AMMO {defenseForecast.ammoRequired}</span>
-                  <span className="threat-demand-compact">{defenseForecast.defensePulsesRequired}{t.shot} / A{defenseForecast.ammoRequired}</span>
+                  <span className="threat-demand">×{defenseForecast.threatCount} / {t.attacks} {defenseForecast.defensePulsesRequired}{t.shot} / AMMO {formatAmmoForecast(defenseForecast.ammoRequired)}</span>
+                  <span className="threat-demand-compact">{defenseForecast.defensePulsesRequired}{t.shot} / A{formatAmmoForecast(defenseForecast.ammoRequired)}</span>
                 </div>
               )}
             </div>
@@ -1618,19 +1581,24 @@ export default function Game() {
           </article>
 
           <div className="relay-zone" style={relayStyle}>
-            <div className="pulse-preview" aria-label={t.nextPulse}>
-              <span className="preview-label">{t.nextPulse}</span>
-              <span className={`frequency-chip frequency-${nextAffinity} ${nextAffinity === currentSector ? "is-matched" : ""}`}>
-                <UiIcon name={nextAffinity} className="ui-icon" />
-              </span>
-              <span className={`frequency-chip frequency-${nextAfter} is-next`}><UiIcon name={nextAfter} className="ui-icon" /></span>
-            </div>
+            {resonanceEnabled && (
+              <div id="desktop-pulse-preview" className="pulse-preview" aria-label={t.nextPulse}>
+                <span className="preview-label">{t.nextPulse}</span>
+                <span className={`frequency-chip frequency-${nextAffinity} ${nextAffinity === currentSector ? "is-matched" : ""}`}>
+                  <UiIcon name={nextAffinity} className="ui-icon" />
+                </span>
+                <span className={`frequency-chip frequency-${nextAfter} is-next`}><UiIcon name={nextAfter} className="ui-icon" /></span>
+              </div>
+            )}
             <button
               ref={relayRef}
               type="button"
               className="relay-control"
               onClick={rotate}
               aria-label={`${t.rotate}. ${t.sector[currentSector]}`}
+              aria-describedby={resonanceEnabled
+                ? "desktop-relay-guidance desktop-pulse-preview"
+                : "desktop-relay-guidance"}
               disabled={view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
             >
               <span className="relay-progress" aria-hidden="true" />
@@ -1643,13 +1611,15 @@ export default function Game() {
               </span>
               <span className="relay-sector-name">{t.sector[currentSector]}</span>
             </button>
-            <span className="relay-instruction" role="status" aria-live="polite">
+            <span id="desktop-relay-guidance" className="relay-instruction" role="status" aria-live="polite">
               {actionFailure ? (
                 <><b>!</b><strong>{actionFailure}</strong></>
               ) : tutorialCopy ? (
                 <><b>{tutorialStep + 1} / 3</b><strong>{tutorialCopy}</strong></>
+              ) : resonanceEnabled ? (
+                <><b>{t.nextPulseShort}</b><strong>{t.sector[nextAffinity]}</strong></>
               ) : (
-                <><b>{t.routeNow}</b><strong>{t.sector[recommendedSector ?? nextAffinity]}</strong><i aria-hidden="true">→</i></>
+                <><b>{t.flowResult}</b><strong>{recentEffectText ?? t.waitingPulse}</strong></>
               )}
             </span>
           </div>
@@ -1672,7 +1642,7 @@ export default function Game() {
             <span>{t.valid}</span>
             <strong>{validRate}%</strong>
           </div>
-          <p>{t.affinityHelp}</p>
+          {resonanceEnabled ? <p>{t.affinityHelp}</p> : <p>{t.loopHint}</p>}
           <div className="module-strip" aria-label={t.installed}>
             {view.upgrades.length ? view.upgrades.map((id) => {
               const upgrade = UPGRADES.find((item) => item.id === id);
@@ -1684,7 +1654,7 @@ export default function Game() {
       </div>
 
       {view.phase === "ready" && (
-        <div ref={modalRef} tabIndex={-1} className="game-overlay opening-overlay" role="dialog" aria-modal="true" aria-labelledby="opening-title" aria-describedby="opening-description" onKeyDown={trapModalFocus}>
+        <div ref={modalRef} tabIndex={-1} className="game-overlay opening-overlay" role="dialog" aria-modal="true" aria-busy={!initialized} aria-labelledby="opening-title" aria-describedby="opening-description" onKeyDown={trapModalFocus}>
           <div className="opening-copy">
             <div className="overlay-tools">
               <button type="button" onClick={toggleLanguage} className="utility-button" aria-label={t.languageLabel}>{t.language}</button>
@@ -1704,9 +1674,14 @@ export default function Game() {
                 </span>
               ))}
             </div>
-            <button type="button" className="primary-action" onClick={beginRun}>
-              <span>{profile.runs === 0 ? t.startGuided : t.start}</span><i aria-hidden="true">→</i>
+            <button type="button" className="primary-action" onClick={() => beginRun("opening")} disabled={!initialized}>
+              <span>{profile.tutorialCompleted ? t.start : t.startGuided}</span><i aria-hidden="true">→</i>
             </button>
+            {!profile.tutorialCompleted && (
+              <button type="button" className="opening-skip" onClick={() => beginRun("opening", false)} disabled={!initialized}>
+                {t.skipTutorial}
+              </button>
+            )}
             <div className="profile-line">
               <span>{t.best} <strong>{profile.bestScore.toLocaleString("en-US")}</strong></span>
               <span>{t.runs} <strong>{profile.runs}</strong></span>
@@ -1773,8 +1748,12 @@ export default function Game() {
             <span>{t.valid} <strong>{validRate}%</strong></span>
             <span>{t.score} <strong>{Math.round(view.score).toLocaleString("en-US")}</strong></span>
           </div>
-          <p className="pause-help" aria-hidden="true">{t.affinityHelp}</p>
-          <span className="sr-only" id="pause-description">{t.affinityHelp}</span>
+          <p className="pause-help" aria-hidden="true">
+            {resonanceEnabled ? t.affinityHelp : t.loopHint}
+          </p>
+          <span className="sr-only" id="pause-description">
+            {resonanceEnabled ? t.affinityHelp : t.loopHint}
+          </span>
           {view.upgrades.length > 0 && (
             <section className="pause-modules" aria-labelledby="pause-modules-title">
               <h3 className="pause-modules-label" id="pause-modules-title">{t.installed}</h3>
@@ -1800,7 +1779,7 @@ export default function Game() {
       )}
 
       {(view.phase === "won" || view.phase === "lost") && (
-        <div ref={modalRef} tabIndex={-1} className={`game-overlay result-overlay result-${view.phase}`} role="dialog" aria-modal="true" aria-labelledby="result-title" aria-describedby="result-summary" onKeyDown={trapModalFocus}>
+        <div ref={modalRef} tabIndex={-1} className={`game-overlay result-overlay result-${view.phase}`} role="dialog" aria-modal="true" aria-labelledby="result-title" aria-describedby={visibleEvidence ? "result-summary result-evidence-summary" : "result-summary"} onKeyDown={trapModalFocus}>
           <p className="eyebrow">{view.phase === "won" ? "SHIFT COMPLETE" : "SHIFT TERMINATED"}</p>
           <h2 id="result-title">{view.phase === "won" ? t.victory : t.defeat}</h2>
           <div className="result-stats" id="result-summary">
@@ -1808,10 +1787,24 @@ export default function Game() {
             <span><small>{t.resultKills}</small><strong>{view.kills}</strong></span>
             <span><small>{t.resultScore}</small><strong>{Math.round(view.score).toLocaleString("en-US")}</strong></span>
           </div>
+          {visibleEvidence && (
+            <dl className="result-evidence" id="result-evidence-summary" aria-label={t.evidence}>
+              <div><dt>{t.activeTime}</dt><dd>{visibleEvidence.activeSeconds.toFixed(1)}{t.seconds}</dd></div>
+              <div><dt>{t.firstKillTime}</dt><dd>{visibleEvidence.firstKillSeconds === null ? t.noRecord : `${visibleEvidence.firstKillSeconds.toFixed(1)}${t.seconds}`}</dd></div>
+              <div><dt>{t.rotationsPerSecond}</dt><dd>{visibleEvidence.rotationsPerSecond.toFixed(2)}</dd></div>
+              <div><dt>{t.productiveRate}</dt><dd>{Math.round(visibleEvidence.productiveRate * 100)}%</dd></div>
+            </dl>
+          )}
+          {debriefLines.length > 0 && (
+            <section className="result-debrief" aria-labelledby="result-debrief-title">
+              <h3 id="result-debrief-title">{t.debrief}</h3>
+              <ul>{debriefLines.map((line) => <li key={line}>{line}</li>)}</ul>
+            </section>
+          )}
           {view.phase === "lost" && view.lossCause && (
             <p className="loss-cause"><strong>{ENEMY_STATS[view.lossCause.enemyKind].name[language]}</strong> {t.failureCause} (−{view.lossCause.breachDamage} CORE)</p>
           )}
-          <button type="button" className="primary-action" onClick={beginRun} autoFocus>
+          <button type="button" className="primary-action" onClick={() => beginRun("replay", false)}>
             <span>{t.replay}</span><i aria-hidden="true">↻</i>
           </button>
         </div>
@@ -1836,6 +1829,10 @@ function CircuitStatus({ state, sector, language }: { state: GameState; sector: 
             : "NO OUTPUT"}
       </span>
     );
+  }
+  if (isCircuitLoadEnabled(state)) {
+    const load = getCircuitLoadForecast(state, sector);
+    return <span className="node-status">{copy.loadShort} {Math.round(load.heat)}%</span>;
   }
   return <span className="node-status">STANDBY</span>;
 }
