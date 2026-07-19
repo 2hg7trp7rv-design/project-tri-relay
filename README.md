@@ -32,6 +32,8 @@ Warden pressures repeated routing.
 - First-run-only guided sequence with an explicit skip; later and replayed runs begin unguided
 - Versioned, strictly validated local active-run checkpoint restored into pause
 - Evidence-only run debrief and anonymous first-kill/active-time/replay metrics
+- Local-only `/playtest` observer console, strict T01–T10 JSON records, and a
+  cohort summarizer that rejects missing, duplicate, mixed-release, and incomplete evidence
 - Home-screen-ready fullscreen manifest/icon set and shared Vercel/Sites security/cache headers
 - Project-specific v03 portrait and landscape WebP world plates with no state-faking fixed enemies
 - v2 Open Graph, square-icon, portrait-promo, and six-second H.264 teaser assets
@@ -97,7 +99,18 @@ npm run simulate
 npm run check:release
 ```
 
-The 88-test v0.4 suite covers the game engine, staged rule unlocks, input
+For closed human testing, open `/playtest` on the exact Vercel deployment. It
+requires the production commit metadata and immutable deployment origin for an
+official session, keeps both the test profile/checkpoint and observer notes in
+  that tab's Session Storage, and leaves the normal-play Local Storage untouched.
+Playtest contexts suppress product telemetry. After T01–T10, run
+`npm run playtest:summary -- <ten JSON paths>`. Interview text and tester IDs
+are never sent through product telemetry and must not be committed to Git.
+The local JSON is not server-signed: a trusted observer, a precommitted roster,
+and deployment access control are still required to prevent fabrication or
+cherry-picking.
+
+The v0.4.1 suite covers the game engine, staged rule unlocks, input
 locking, large-frame clamping, pause behavior, 30 Hz vs 144 Hz timing,
 strict checkpoint validation, evidence-only debriefs, anonymous run metrics,
 and the desired-state CrazyGames bridge. The simulation phase-normalizes and

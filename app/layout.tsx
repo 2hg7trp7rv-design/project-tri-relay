@@ -1,11 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import { Analytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
+import Observability from "./Observability";
 import "./globals.css";
 import "./game/production.css";
 
 const isVercelBuild = process.env.VERCEL === "1";
+const sourceRevisionCandidate = process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
+const sourceRevision = /^[0-9a-f]{40}$/i.test(sourceRevisionCandidate)
+  ? sourceRevisionCandidate
+  : "unknown";
+const immutableDeployment = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : "unknown";
 
 const geistSans = localFont({
   src: "./fonts/geist-sans-latin-v01.woff2",
@@ -85,6 +91,10 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <head>
+        <meta name="tri-relay-release" content="0.4.1" />
+        <meta name="tri-relay-source-revision" content={sourceRevision} />
+        <meta name="tri-relay-immutable-deployment" content={immutableDeployment} />
+        <meta name="tri-relay-deployment-environment" content={process.env.VERCEL_ENV ?? (isVercelBuild ? "unknown" : "local")} />
         {isVercelBuild && (
           <meta name="tri-relay-observability" content="vercel" />
         )}
@@ -93,12 +103,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
-        {isVercelBuild && (
-          <>
-            <Analytics />
-            <SpeedInsights />
-          </>
-        )}
+        {isVercelBuild && <Observability />}
       </body>
     </html>
   );

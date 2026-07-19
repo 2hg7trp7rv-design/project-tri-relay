@@ -22,6 +22,13 @@ export default function PrivacyPage() {
           言語、ミュート、最高記録、試行回数、チュートリアル完了状態、進行中ランのチェックポイントはブラウザのローカルストレージに保存されます。
           サーバーへ同期しません。ブラウザのサイトデータを削除すると消去できます。
         </p>
+        <p>
+          観察者用プレイテストでは、T01〜T10のコード、端末条件、観察結果、回答原文を現在のタブのSession Storageだけに保存します。
+          同意確認前にセッション記録を作成せず、プレイテスト中は本作のVercel Analytics、Speed Insights、カスタムイベント、クライアントエラー送信を停止します。
+          テスト用プロフィールと途中保存も同じタブへ分離し、通常プレイのLocal Storageを変更しません。
+          プレイテスト記録は、観察者がJSONファイルを保存するか、確認後にJSONをシステムクリップボードへコピーした場合だけタブ外へ出ます。同期クリップボードを使う端末では他端末へ複製される場合があります。
+          タブを閉じるかSession Storageを削除するとブラウザ内の記録は消えます。Tコードは本名ではありませんが、正確な実施時刻や観察者の台帳と結合できるため、完全な匿名情報として扱いません。
+        </p>
         <h2>外部プラットフォーム</h2>
         <p>
           CrazyGames上では、同社SDKがプラットフォーム側の計測や設定処理を行う場合があります。
@@ -55,6 +62,17 @@ export default function PrivacyPage() {
           Language, mute preference, records, run count, tutorial completion, and an active-run checkpoint are
           stored in browser local storage. They are not synchronized to a server and can be removed by clearing
           this site&apos;s browser data.
+        </p>
+        <p>
+          During observer-led playtests, the T01–T10 code, device conditions, observations, and exact interview
+          wording remain only in the current tab&apos;s Session Storage. No session record is created before consent
+          is confirmed. During that playtest context, this product disables Vercel Analytics, Speed Insights,
+          custom events, and client-error transmission. The test profile and checkpoint are also isolated from
+          normal-play Local Storage. The playtest record leaves the tab only when the observer saves a JSON file or, after a
+          warning, copies JSON to the system clipboard; a synchronized clipboard may replicate it to another
+          device. The browser copy disappears when Session Storage is cleared or the tab session ends. A T-code
+          is not a name, but exact timestamps can be linked to a trusted observer roster, so this is not treated
+          as fully anonymous data.
         </p>
         <h2>Third-party platform</h2>
         <p>

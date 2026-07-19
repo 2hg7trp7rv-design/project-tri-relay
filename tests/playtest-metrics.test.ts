@@ -36,6 +36,24 @@ test("only accepted rotations are counted by the explicit rotation hook", () => 
   tracker.advance(4, state);
   assert.equal(tracker.getResult(state).rotations, 2);
   assert.equal(tracker.getResult(state).rotationsPerSecond, 0.5);
+  assert.equal(tracker.getResult(state).firstInputSeconds, 0);
+});
+
+test("first productive route and wave-two timings are preserved separately", () => {
+  const state = startRun(220, false);
+  const { tracker, pass } = trackerHarness({ guided: false });
+  pass(2_500);
+  tracker.advance(2.5, state, [{ kind: "extract", sector: "extract" }]);
+  pass(1_500);
+  state.waveIndex = 1;
+  tracker.advance(1.5, state, [{ kind: "fabricate", sector: "fabricate" }]);
+  const result = tracker.getResult(state);
+  assert.equal(result.firstSectorSeconds.extract, 2.5);
+  assert.equal(result.firstSectorWallSeconds.extract, 2.5);
+  assert.equal(result.firstSectorSeconds.fabricate, 4);
+  assert.equal(result.firstSectorSeconds.defend, null);
+  assert.equal(result.wave2Seconds, 4);
+  assert.equal(result.wave2WallSeconds, 4);
 });
 
 test("tutorial, first kill, and active-90 events are emitted once", () => {
@@ -50,6 +68,15 @@ test("tutorial, first kill, and active-90 events are emitted once", () => {
     "tutorial_completed",
     "active_90s_reached",
   ]);
+});
+
+test("first-kill timing rounds upward at the strict 25-second boundary", () => {
+  const state = startRun(230, true);
+  const { tracker } = trackerHarness();
+  state.kills = 1;
+  tracker.advance(25.0001, state, [{ kind: "kill" }]);
+  assert.equal(tracker.getResult(state).firstKillSeconds, 25.001);
+  assert.equal(tracker.snapshot().firstKillActiveSeconds, 25.001);
 });
 
 test("unguided runs never manufacture a tutorial completion event", () => {
@@ -103,4 +130,5 @@ test("checkpoint snapshots preserve timings, rotation count, and first-kill evid
   assert.equal(result.activeSeconds, 15);
   assert.equal(result.rotations, 1);
   assert.equal(result.firstKillSeconds, 12);
+  assert.equal(result.guided, false);
 });

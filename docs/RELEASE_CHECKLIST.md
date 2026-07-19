@@ -19,7 +19,7 @@ release. A Vercel deployment being playable is not itself a release decision.
 - [ ] Vercel runtime logs receive a controlled `/api/client-error` test without
       cookies, query strings, free text, or device identifiers.
 - [ ] Public payload remains below 20 MiB and 1,500 files.
-- [ ] All 88 automated tests pass on the exact commit; both Sites and native
+- [ ] All automated tests pass on the exact commit; both Sites and native
       Vercel builds and type checks pass.
 - [ ] Active Run v4 rejects malformed, duplicate, expired, and future-dated
       data before it reaches the engine; retired v2/v3 runs are removed.
@@ -40,9 +40,21 @@ release. A Vercel deployment being playable is not itself a release decision.
 - [ ] At least 8/10 score their first kill within 25 seconds; at least 7/10
       remain active at 90 seconds.
 - [ ] Voluntary second-run starts are recorded separately; do not count a
-      prompted retry as replay intent.
+      prompted retry or a start after 30.000 seconds as replay intent.
+- [ ] At least 8/10 explain the wave-two frequency/resonance rule; W2 non-arrival
+      remains a failure rather than disappearing from the denominator.
 - [ ] The T01–T10 session follows `docs/V04_PLAYTEST_PROTOCOL.md`; observer
       wall time and foreground/unpaused active time are stored separately.
+- [ ] The ten local JSON records share one exact commit and immutable
+      deployment; `npm run playtest:summary` returns GO and its input SHA-256 is
+      attached to the decision without committing interview text.
+- [ ] Before T01, the trusted observer roster/order, immutable deployment,
+      language, retention date, and access-control method are fixed in a
+      separate restricted record. Local JSON and its hash are unsigned and do
+      not by themselves prove absence of fabrication, editing, or selection.
+- [ ] Threat, city, current route, next route, ore, ammo, all three facilities,
+      and all four post-run enemy silhouettes are recorded separately rather
+      than collapsed into one observer checkbox.
 - [ ] The real-device matrix below passes on the exact deployment commit.
 - [ ] Product owner signs off the Basic Launch candidate; ads remain disabled.
 - [ ] A named legal reviewer supplies and approves the real operator identity,
@@ -50,12 +62,17 @@ release. A Vercel deployment being playable is not itself a release decision.
       processor-policy links in the bilingual privacy notice. Do not invent or
       infer any missing organization detail.
 
-## Known unpassed checks for v0.4
+## Major unpassed checks for v0.4.1
 
 - [ ] 320×568 layout manually verified.
 - [ ] 390×844 layout manually verified.
 - [ ] Landscape phone layout manually verified.
 - [ ] iPhone Safari touch, app-switch, screen-lock, BFCache, pause, and audio resume verified.
+- [ ] Android Chrome touch, tab switch, tab discard, reload, and checkpoint recovery verified.
+- [ ] CrazyGames mobile iframe and Developer Portal preview verified on the exact commit.
+- [ ] Deployment Protection and the restricted pre-registered T01–T10 roster are in place.
+- [ ] Analytics reception and a controlled privacy-safe client-error event are verified in Vercel.
+- [ ] Named product-owner and privacy/legal reviews are complete.
 - [ ] Nine pending art/legal metadata approvals resolved with reviewer name,
       role, and date, and `npm run check:commercial` passes.
 - [ ] New-player comprehension, first-kill, active-90-second, and voluntary-replay gates pass.
@@ -64,14 +81,12 @@ Desktop browser verification does not satisfy the phone checks above. An
 automated test, responsive CSS rule, or resized screenshot is not an iPhone
 Safari result.
 
-On 2026-07-19, automated Chromium passed 320×568 and 390×844 portrait
-viewports, the 800×450 mobile-class viewport, and 1366×768 desktop without a
-horizontal overflow, failed request, console exception, or framework error
-overlay. The real 320×568 result dialog also opened at scroll position zero
-with its heading and run evidence visible; the replay control remained
-reachable below by scrolling instead of stealing initial focus. This evidence
-narrows layout risk but deliberately leaves every real-device checkbox above
-open.
+The v0.4 baseline previously passed automated Chromium at 320×568, 390×844,
+800×450, and 1366×768, including the 320×568 result dialog. The v0.4.1 observer
+console was rechecked locally at 320×568 and 390×844 for overflow, controls,
+Session Storage isolation, interrupted-run capture, and console/request errors.
+That v0.4.1 check does not re-certify the normal game at 800×450 or 1366×768,
+and none of this automated evidence closes a real-device checkbox above.
 
 ## Real-device matrix
 

@@ -27,6 +27,7 @@ export interface Profile {
 export interface RestoredActiveRun {
   state: GameState;
   evidence: RunEvidenceSnapshot | null;
+  playtestSessionId: string | null;
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -266,9 +267,45 @@ function validateEvidence(value: unknown): value is RunEvidenceSnapshot {
   }
   if ((value.wallSeconds as number) + 0.1 < (value.activeSeconds as number)) return false;
   if (!integer(value.rotations, 0, 10_000_000)) return false;
+  for (const name of [
+    "firstInputActiveSeconds",
+    "firstInputWallSeconds",
+    "wave2ActiveSeconds",
+    "wave2WallSeconds",
+  ] as const) {
+    if (value[name] !== undefined && value[name] !== null && !finite(value[name], 0, MAX_RUN_SECONDS)) return false;
+  }
+  for (const name of ["firstSectorActiveSeconds", "firstSectorWallSeconds"] as const) {
+    if (value[name] === undefined) continue;
+    if (!isRecord(value[name])) return false;
+    for (const route of SECTORS) {
+      const timing = value[name][route];
+      if (timing !== null && !finite(timing, 0, MAX_RUN_SECONDS)) return false;
+    }
+  }
+  const firstSectorActiveSeconds = isRecord(value.firstSectorActiveSeconds)
+    ? value.firstSectorActiveSeconds
+    : undefined;
+  const firstSectorWallSeconds = isRecord(value.firstSectorWallSeconds)
+    ? value.firstSectorWallSeconds
+    : undefined;
   if (value.firstKillActiveSeconds !== null && !finite(value.firstKillActiveSeconds, 0, MAX_RUN_SECONDS)) return false;
   if (!bool(value.tutorialReported) || !bool(value.active90Reported) || !bool(value.completed)) return false;
   if (value.firstKillActiveSeconds !== null && (value.firstKillActiveSeconds as number) > (value.activeSeconds as number) + 0.001) return false;
+  for (const timing of [
+    value.firstInputActiveSeconds,
+    value.wave2ActiveSeconds,
+    ...SECTORS.map((route) => firstSectorActiveSeconds?.[route]),
+  ]) {
+    if (typeof timing === "number" && timing > (value.activeSeconds as number) + 0.001) return false;
+  }
+  for (const timing of [
+    value.firstInputWallSeconds,
+    value.wave2WallSeconds,
+    ...SECTORS.map((route) => firstSectorWallSeconds?.[route]),
+  ]) {
+    if (typeof timing === "number" && timing > (value.wallSeconds as number) + 0.001) return false;
+  }
   if (value.active90Reported && (value.activeSeconds as number) < 90) return false;
   if (!value.active90Reported && (value.activeSeconds as number) > 90) return false;
   // Active-run storage is cleared before a completion snapshot can be saved.
@@ -416,6 +453,12 @@ export function safeReadActiveRun(
     const record: unknown = JSON.parse(raw);
     if (!isRecord(record) || record.version !== ACTIVE_RUN_VERSION) return reject();
     if (!finite(record.savedAt, 0, Number.MAX_SAFE_INTEGER)) return reject();
+    const playtestSessionId = record.playtestSessionId === undefined || record.playtestSessionId === null
+      ? null
+      : typeof record.playtestSessionId === "string" && /^[a-zA-Z0-9-]{16,80}$/.test(record.playtestSessionId)
+        ? record.playtestSessionId
+        : undefined;
+    if (playtestSessionId === undefined) return reject();
     const age = now - (record.savedAt as number);
     if (age > MAX_CHECKPOINT_AGE_MS || age < -MAX_FUTURE_SKEW_MS) return reject();
     if (!isValidGameState(record.state)) return reject();
@@ -431,6 +474,7 @@ export function safeReadActiveRun(
     return {
       state,
       evidence,
+      playtestSessionId,
     };
   } catch {
     return reject();
@@ -442,10 +486,15 @@ export function safeWriteActiveRun(
   evidence: RunEvidenceSnapshot | null = null,
   storage: StorageLike | null = browserStorage(),
   now = Date.now(),
+  playtestSessionId: string | null = null,
 ) {
   if (!storage) return;
   try {
     if (!state || !isValidGameState(state)) {
+      removeQuietly(storage, ACTIVE_RUN_KEY);
+      return;
+    }
+    if (playtestSessionId !== null && !/^[a-zA-Z0-9-]{16,80}$/.test(playtestSessionId)) {
       removeQuietly(storage, ACTIVE_RUN_KEY);
       return;
     }
@@ -459,6 +508,7 @@ export function safeWriteActiveRun(
       savedAt: now,
       state,
       evidence: validatedEvidence,
+      playtestSessionId,
     };
     storage.setItem(ACTIVE_RUN_KEY, JSON.stringify(record));
     retireLegacyRuns(storage);

@@ -1753,6 +1753,343 @@ button:focus-visible {
   .upgrade-card p { margin: 5px 0 8px; line-height: 1.35; }
 }
 
+/* Observer-only, local playtest operations. This route never changes game UI. */
+.playtest-console {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow: auto;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 80% 0%, rgba(74, 223, 243, 0.09), transparent 34%),
+    #05070a;
+  color: var(--text);
+  user-select: text;
+  -webkit-user-select: text;
+  overscroll-behavior: auto;
+}
+
+.playtest-console-header,
+.playtest-panel,
+.playtest-console-footer,
+.playtest-status {
+  width: min(100%, 920px);
+  margin-inline: auto;
+}
+
+.playtest-console-header {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.playtest-console-header p,
+.playtest-console-header h1,
+.playtest-panel h2,
+.playtest-note,
+.playtest-status {
+  margin: 0;
+}
+
+.playtest-console-header > p:first-child {
+  color: var(--defend);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.playtest-console-header h1 {
+  font-size: clamp(25px, 5vw, 43px);
+  letter-spacing: -0.04em;
+}
+
+.playtest-console-header > p:last-child,
+.playtest-note {
+  color: #aeb9c1;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.playtest-panel {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: clamp(17px, 3vw, 28px);
+  border: 1px solid rgba(145, 160, 172, 0.22);
+  border-radius: 8px;
+  background: rgba(10, 16, 22, 0.95);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+}
+
+.playtest-panel h2 {
+  color: #dffbff;
+  font-size: 18px;
+}
+
+.playtest-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.playtest-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.playtest-field {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.playtest-field.wide {
+  width: 100%;
+}
+
+.playtest-field > span {
+  color: #b8c5cc;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.playtest-field input,
+.playtest-field select,
+.playtest-field textarea {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(145, 160, 172, 0.35);
+  border-radius: 4px;
+  background: #070c11;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 16px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.playtest-field textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.playtest-field input:focus,
+.playtest-field select:focus,
+.playtest-field textarea:focus {
+  border-color: var(--defend);
+  outline: 2px solid rgba(74, 223, 243, 0.24);
+  outline-offset: 1px;
+}
+
+.playtest-field input:disabled,
+.playtest-field select:disabled,
+.playtest-field textarea:disabled {
+  opacity: 0.72;
+}
+
+.playtest-timing-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.playtest-not-reached {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  color: #aeb9c1;
+  font-size: 12px;
+}
+
+.playtest-not-reached input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--defend);
+}
+
+.playtest-silhouette-check {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(145, 160, 172, 0.24);
+  background: #070c11;
+}
+
+.playtest-silhouette-check > p {
+  margin: 0;
+  color: #b8c5cc;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.playtest-silhouette-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.playtest-silhouette-board.enemies {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.playtest-silhouette-board figure {
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid rgba(184, 197, 204, 0.22);
+  background: #10161c;
+  color: #e1e7ea;
+}
+
+.playtest-silhouette-board .production-visual {
+  width: min(100%, 116px);
+  max-height: 88px;
+  color: #dce4e7 !important;
+  filter: grayscale(1) contrast(1.15);
+  animation: none !important;
+}
+
+.playtest-reveal-scoring {
+  min-height: 46px;
+  border: 1px solid rgba(220, 228, 231, 0.4);
+  background: #182129;
+  color: #f4f7f8;
+  font: 800 12px/1.3 var(--font-geist-mono), monospace;
+}
+
+.playtest-silhouette-board figcaption {
+  color: #fff;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.playtest-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.playtest-summary div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(145, 160, 172, 0.16);
+  background: #070c11;
+}
+
+.playtest-summary dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.playtest-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+}
+
+.playtest-run {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.4fr) repeat(4, minmax(110px, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  border-left: 3px solid var(--defend);
+  background: rgba(74, 223, 243, 0.055);
+  font-size: 12px;
+}
+
+.playtest-run strong {
+  color: #dffbff;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.playtest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.playtest-actions button,
+.playtest-primary,
+.playtest-link-button {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 15px;
+  border: 1px solid rgba(145, 160, 172, 0.4);
+  border-radius: 4px;
+  background: #101922;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.playtest-primary,
+.playtest-actions .playtest-primary {
+  border-color: rgba(74, 223, 243, 0.68);
+  background: #bdeff5;
+  color: #041014;
+}
+
+.playtest-actions .playtest-danger {
+  border-color: rgba(255, 92, 108, 0.5);
+  color: #ffabb5;
+}
+
+.playtest-actions button:hover,
+.playtest-primary:hover,
+.playtest-link-button:hover {
+  border-color: var(--defend);
+}
+
+.playtest-status {
+  min-height: 50px;
+  padding: 12px 4px;
+  color: #ffd095;
+  font-size: 13px;
+}
+
+.playtest-console-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px 0 34px;
+}
+
+.playtest-console-footer a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--defend);
+}
+
+@media (max-width: 620px) {
+  .playtest-console { padding-inline: max(10px, env(safe-area-inset-left)); }
+  .playtest-grid,
+  .playtest-summary { grid-template-columns: 1fr; }
+  .playtest-run { grid-template-columns: 1fr 1fr; }
+  .playtest-run strong { grid-column: 1 / -1; }
+  .playtest-actions { display: grid; grid-template-columns: 1fr; }
+  .playtest-actions button,
+  .playtest-link-button { width: 100%; }
+  .playtest-silhouette-board.enemies { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -31,7 +31,13 @@ const evidence: RunEvidenceSnapshot = {
   activeSeconds: 42,
   wallSeconds: 55,
   rotations: 12,
+  firstInputActiveSeconds: 1.2,
+  firstInputWallSeconds: 1.5,
+  firstSectorActiveSeconds: { extract: 3, fabricate: 6, defend: 9 },
+  firstSectorWallSeconds: { extract: 3.3, fabricate: 6.3, defend: 9.3 },
   firstKillActiveSeconds: null,
+  wave2ActiveSeconds: 35,
+  wave2WallSeconds: 44,
   tutorialReported: true,
   active90Reported: false,
   completed: false,
@@ -122,7 +128,18 @@ test("v4 active run round-trips evidence and restores live play as paused", () =
   assert.equal(restored.state.phaseBeforePause, "playing");
   assert.equal(restored.state.clock, 7);
   assert.deepEqual(restored.evidence, evidence);
+  assert.equal(restored.playtestSessionId, null);
   assert.notEqual(restored.state, state);
+});
+
+test("playtest checkpoints carry an opaque session binding", () => {
+  const storage = new MemoryStorage();
+  const sessionId = "00000000-0000-4000-8000-000000000001";
+  safeWriteActiveRun(storedState(), evidence, storage, NOW, sessionId);
+  assert.equal(safeReadActiveRun(storage, NOW)?.playtestSessionId, sessionId);
+
+  safeWriteActiveRun(storedState(), evidence, storage, NOW, "T01");
+  assert.equal(safeReadActiveRun(storage, NOW), null);
 });
 
 test("old v2 and v3 active runs are retired without touching the profile", () => {
@@ -246,6 +263,9 @@ test("invalid evidence rejects the whole checkpoint instead of partially trustin
     { ...evidence, activeSeconds: -1 },
     { ...evidence, activeSeconds: 56, wallSeconds: 55 },
     { ...evidence, firstKillActiveSeconds: 43 },
+    { ...evidence, firstInputActiveSeconds: 43 },
+    { ...evidence, wave2WallSeconds: 56 },
+    { ...evidence, firstSectorActiveSeconds: { extract: 3, fabricate: 6 } },
     { ...evidence, active90Reported: true },
     { ...evidence, completed: true },
   ]) {

@@ -57,6 +57,14 @@ import {
   type RunEvidenceResult,
   type RunStartSource,
 } from "./playtest-metrics";
+import {
+  beginPlaytestRun,
+  getPlaytestSessionToken,
+  markPlaytestGameReady,
+  recordPlaytestRun,
+  recordPlaytestProtocolDeviation,
+  safeReadPlaytestSession,
+} from "./playtest-session";
 import { CityGate, EnemyGlyph, MachineGlyph, RelayDial, WorldStateOverlay } from "./production-visuals";
 import { UiIcon } from "./ui-icons";
 import { trackGameEvent } from "./telemetry";
@@ -459,6 +467,18 @@ function circuitClass(state: GameState, sector: Sector, recommended: Sector | nu
     .join(" ");
 }
 
+function browserSessionStorage() {
+  try { return window.sessionStorage; } catch { return null; }
+}
+
+function browserLocalStorage() {
+  try { return window.localStorage; } catch { return null; }
+}
+
+function readRuntimeMeta(name: string) {
+  return document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? "unknown";
+}
+
 export default function Game() {
   const stateRef = useRef<GameState>(cloneGameState(INITIAL_GAME_STATE));
   const audioRef = useRef<AudioDirector>(new AudioDirector());
@@ -468,6 +488,9 @@ export default function Game() {
   const tutorialTrackedRef = useRef(false);
   const initializationCompleteRef = useRef(false);
   const evidenceRef = useRef<RunEvidenceTracker | null>(null);
+  const playtestSessionIdRef = useRef<string | null>(null);
+  const gameStorageRef = useRef<Storage | null>(null);
+  const resultReachedAtRef = useRef<number | null>(null);
   const evidenceFrameAtRef = useRef<number | null>(null);
   const [view, setView] = useState<GameState>(() => cloneGameState(INITIAL_GAME_STATE));
   const [resultEvidence, setResultEvidence] = useState<RunEvidenceResult | null>(null);
@@ -477,8 +500,12 @@ export default function Game() {
   const [platformMuted, setPlatformMuted] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [officialPlaytest, setOfficialPlaytest] = useState(false);
+  const [playtestIntegrityError, setPlaytestIntegrityError] = useState(false);
+  const playtestIntegrityErrorRef = useRef(false);
+  const [playtestIntegrityMessage, setPlaytestIntegrityMessage] = useState("記録したコミット、配備URL、現在のゲーム、または途中保存が一致しません。");
   const t = TEXT[language];
-  const modalOpen = ["ready", "upgrade", "paused", "won", "lost"].includes(view.phase);
+  const modalOpen = playtestIntegrityError || ["ready", "upgrade", "paused", "won", "lost"].includes(view.phase);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const previousModalRef = useRef(modalOpen);
   const keyboardNavigationRef = useRef(false);
@@ -518,12 +545,23 @@ export default function Game() {
     const snapshot = cloneGameState(stateRef.current);
     const evidence = evidenceRef.current?.snapshot() ?? null;
     setView(snapshot);
+    const checkpointable = snapshot.phase === "playing"
+      || snapshot.phase === "intermission"
+      || snapshot.phase === "upgrade"
+      || snapshot.phase === "paused";
     if (
-      forceCheckpoint
-      || snapshot.clock - lastCheckpointClockRef.current >= 2
-      || (evidence?.activeSeconds ?? 0) - lastCheckpointEvidenceRef.current >= 2
+      checkpointable
+      && (forceCheckpoint
+        || snapshot.clock - lastCheckpointClockRef.current >= 2
+        || (evidence?.activeSeconds ?? 0) - lastCheckpointEvidenceRef.current >= 2)
     ) {
-      safeWriteActiveRun(snapshot, evidence);
+      safeWriteActiveRun(
+        snapshot,
+        evidence,
+        gameStorageRef.current,
+        Date.now(),
+        playtestSessionIdRef.current,
+      );
       lastCheckpointClockRef.current = snapshot.clock;
       lastCheckpointEvidenceRef.current = evidence?.activeSeconds ?? 0;
     }
@@ -558,31 +596,70 @@ export default function Game() {
   const updateProfile = useCallback((recipe: (current: Profile) => Profile) => {
     setProfile((current) => {
       const next = recipe(current);
-      safeWriteProfile(next);
+      safeWriteProfile(next, gameStorageRef.current);
       return next;
     });
   }, []);
 
   const beginRun = useCallback((source: "opening" | "replay", guidedOverride?: boolean) => {
-    if (!initializationCompleteRef.current) return;
+    if (!initializationCompleteRef.current || playtestIntegrityErrorRef.current) return;
     const phase = stateRef.current.phase;
     if (source === "opening" ? phase !== "ready" : !["won", "lost"].includes(phase)) return;
     audioRef.current?.unlock();
     const seed = ((Date.now() & 0xffffffff) ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
-    const guided = guidedOverride ?? !profile.tutorialCompleted;
+    let guided = guidedOverride ?? !profile.tutorialCompleted;
+    let runOrdinal = profile.runs + 1;
+    const playtestSessionId = playtestSessionIdRef.current;
+    if (playtestSessionId) {
+      const reportStorage = browserSessionStorage();
+      const currentPlaytest = safeReadPlaytestSession(reportStorage);
+      if (currentPlaytest?.sessionId === playtestSessionId
+        && currentPlaytest.datasetKind === "official"
+        && currentPlaytest.runs.length === 0) guided = true;
+      const at = new Date();
+      const resultReachedAt = resultReachedAtRef.current;
+      const replayDelay = source === "replay" && resultReachedAt !== null
+        ? Math.max(0, (performance.now() - resultReachedAt) / 1_000)
+        : undefined;
+      const started = beginPlaytestRun(playtestSessionId, reportStorage, {
+        source,
+        at,
+        replayDelaySeconds: replayDelay,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          dpr: window.devicePixelRatio || 1,
+        },
+        language,
+      });
+      if (!started) {
+        setPlaytestIntegrityMessage("テスト記録の開始状態を更新できません。観察者コンソールで途中保存または技術事故を確定してください。");
+        playtestIntegrityErrorRef.current = true;
+        setPlaytestIntegrityError(true);
+        return;
+      }
+      runOrdinal = (started.runs.at(-1)?.evidence.runOrdinal ?? 0) + 1;
+    }
+    resultReachedAtRef.current = null;
     guidedRunRef.current = guided;
     tutorialTrackedRef.current = false;
     stateRef.current = startRun(seed, guided);
     const evidenceSource: RunStartSource = source === "replay" ? "replay" : "start";
     evidenceRef.current = new RunEvidenceTracker({
       source: evidenceSource,
-      runOrdinal: profile.runs + 1,
+      runOrdinal,
       guided,
     });
     evidenceFrameAtRef.current = performance.now();
     setResultEvidence(null);
     trackGameEvent("run_started", { guided, source });
-    safeWriteActiveRun(stateRef.current, evidenceRef.current.snapshot());
+    safeWriteActiveRun(
+      stateRef.current,
+      evidenceRef.current.snapshot(),
+      gameStorageRef.current,
+      Date.now(),
+      playtestSessionId,
+    );
     lastCheckpointClockRef.current = 0;
     lastCheckpointEvidenceRef.current = 0;
     endCommittedRef.current = false;
@@ -596,9 +673,10 @@ export default function Game() {
     }));
     playEvents([{ kind: "upgrade", amount: 1 }]);
     syncView(true);
-  }, [muted, platformMuted, playEvents, profile.runs, profile.tutorialCompleted, syncView, updateProfile]);
+  }, [language, muted, platformMuted, playEvents, profile.runs, profile.tutorialCompleted, syncView, updateProfile]);
 
   const rotate = useCallback(() => {
+    if (playtestIntegrityErrorRef.current) return;
     audioRef.current?.unlock();
     const events = rotateRelay(stateRef.current);
     playEvents(events);
@@ -609,6 +687,7 @@ export default function Game() {
   }, [playEvents, syncView]);
 
   const togglePause = useCallback(() => {
+    if (playtestIntegrityErrorRef.current) return;
     const state = stateRef.current;
     if (state.phase === "paused") {
       audioRef.current?.unlock();
@@ -625,6 +704,7 @@ export default function Game() {
 
   const installUpgrade = useCallback(
     (upgradeId: string) => {
+      if (playtestIntegrityErrorRef.current) return;
       audioRef.current?.unlock();
       const events = selectUpgrade(stateRef.current, upgradeId);
       playEvents(events);
@@ -653,12 +733,13 @@ export default function Game() {
   }, [platformMuted, updateProfile]);
 
   const toggleLanguage = useCallback(() => {
+    if (officialPlaytest) return;
     setLanguage((current) => {
       const next = current === "ja" ? "en" : "ja";
       updateProfile((stored) => ({ ...stored, language: next }));
       return next;
     });
-  }, [updateProfile]);
+  }, [officialPlaytest, updateProfile]);
 
   useEffect(() => {
     // React Strict Mode intentionally replays mount effects in development.
@@ -686,23 +767,74 @@ export default function Game() {
       : embedded
         ? "embedded"
         : "standard";
-    const stored = safeReadProfile();
+    const playtestToken = getPlaytestSessionToken(window.location.hash);
+    if (playtestToken) document.documentElement.dataset.playtestSession = "active";
+    const reportStorage = browserSessionStorage();
+    const playtestSession = safeReadPlaytestSession(reportStorage);
+    let acceptedPlaytestSession = null as typeof playtestSession;
+    let acceptedPlaytestSessionId: string | null = null;
+    let acceptedOfficialPlaytest = false;
+    let playtestIntegrityFailed = false;
+    if (playtestToken) {
+      const matchingSession = playtestSession?.status === "active" && playtestSession.sessionId === playtestToken
+        ? playtestSession
+        : null;
+      let integrityValid = Boolean(matchingSession);
+      if (matchingSession?.datasetKind === "official") {
+        let deploymentOrigin = "";
+        try { deploymentOrigin = new URL(matchingSession.deploymentUrl).origin; } catch { /* invalid below */ }
+        integrityValid = readRuntimeMeta("tri-relay-source-revision") === matchingSession.sourceRevision
+          && readRuntimeMeta("tri-relay-immutable-deployment") === matchingSession.deploymentUrl
+          && readRuntimeMeta("tri-relay-deployment-environment") === "production"
+          && window.location.origin === deploymentOrigin;
+      }
+      if (matchingSession && integrityValid) {
+        acceptedPlaytestSession = matchingSession;
+        acceptedPlaytestSessionId = playtestToken;
+        playtestSessionIdRef.current = playtestToken;
+        acceptedOfficialPlaytest = matchingSession.datasetKind === "official";
+        if (!markPlaytestGameReady(playtestToken, reportStorage)) {
+          playtestIntegrityFailed = true;
+        }
+      } else {
+        playtestIntegrityFailed = true;
+      }
+    }
+    const gameStorage = playtestToken
+      ? acceptedPlaytestSessionId ? reportStorage : null
+      : browserLocalStorage();
+    gameStorageRef.current = gameStorage;
+    const stored = safeReadProfile(gameStorage);
     const browserLanguage = navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en";
     let hasStoredProfile = false;
     try {
-      hasStoredProfile = window.localStorage.getItem(PROFILE_KEY) !== null;
+      hasStoredProfile = Boolean(gameStorage && gameStorage.getItem(PROFILE_KEY) !== null);
     } catch {
       hasStoredProfile = false;
     }
     const initialLanguage = hasStoredProfile ? stored.language : browserLanguage;
+    const restored = safeReadActiveRun(gameStorage);
+    if (acceptedPlaytestSession) {
+      const expectsCheckpoint = acceptedPlaytestSession.currentRunStartedAt !== null;
+      const hasMatchingCheckpoint = restored?.playtestSessionId === acceptedPlaytestSession.sessionId;
+      if (expectsCheckpoint !== hasMatchingCheckpoint) {
+        playtestIntegrityFailed = true;
+      }
+    }
     const animationFrame = requestAnimationFrame(() => {
+      setOfficialPlaytest(acceptedOfficialPlaytest);
+      if (playtestIntegrityFailed) playtestIntegrityErrorRef.current = true;
+      setPlaytestIntegrityError((current) => current || playtestIntegrityFailed);
+      if (playtestIntegrityFailed && acceptedPlaytestSession) {
+        setPlaytestIntegrityMessage("テスト記録と途中保存の状態が一致しません。新しいランを始めず、観察者コンソールで中断ランまたは技術事故を確定してください。");
+      }
       setProfile(stored);
       setLanguage(initialLanguage);
       setMuted(stored.muted);
       audioRef.current.setMuted(stored.muted || platform.isAudioMuted());
       setReducedMotion(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-      const restored = safeReadActiveRun();
-      if (restored) {
+      if (!playtestIntegrityFailed && !playtestIntegrityErrorRef.current
+        && restored && restored.playtestSessionId === acceptedPlaytestSessionId) {
         const restoredRun = restored.state;
         const guided = restored.evidence?.guided ?? restoredRun.tutorialStep < 3;
         evidenceRef.current = new RunEvidenceTracker({
@@ -739,6 +871,43 @@ export default function Game() {
   useEffect(() => () => {
     audioRef.current.dispose();
   }, []);
+
+  useEffect(() => {
+    const sessionId = playtestSessionIdRef.current;
+    if (!sessionId) return;
+    const lock = (reason: string, message: string) => {
+      const saved = recordPlaytestProtocolDeviation(sessionId, reason, browserSessionStorage());
+      pauseGame(stateRef.current);
+      audioRef.current?.suspend();
+      platformRef.current?.gameplayStop();
+      if (saved?.currentRunStartedAt) syncView(true);
+      else setView(cloneGameState(stateRef.current));
+      setPlaytestIntegrityMessage(saved ? message : `${message} 逸脱記録も保存できないため、この回を正式データへ使用しないでください。`);
+      playtestIntegrityErrorRef.current = true;
+      setPlaytestIntegrityError(true);
+    };
+    const verifyRuntime = () => {
+      if (getPlaytestSessionToken(window.location.hash) !== sessionId) {
+        lock("playtest URL fragment changed during session", "プレイテスト識別子がURLから変更されました。このランは続行せず、観察者コンソールへ戻ってください。");
+        return;
+      }
+      const current = safeReadPlaytestSession(browserSessionStorage());
+      if (current?.sessionId === sessionId && current.datasetKind === "official") {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        if (width < 320 || width > 430 || height < 568 || height > 932 || width >= height) {
+          lock("official viewport left the 320-430 x 568-932 portrait cohort", "正式テストの画面条件から外れました。向きを戻して再開せず、この回を観察記録へ残してください。");
+        }
+      }
+    };
+    verifyRuntime();
+    window.addEventListener("hashchange", verifyRuntime);
+    window.addEventListener("resize", verifyRuntime);
+    return () => {
+      window.removeEventListener("hashchange", verifyRuntime);
+      window.removeEventListener("resize", verifyRuntime);
+    };
+  }, [syncView]);
 
   useEffect(() => {
     audioRef.current.setMuted(muted || platformMuted);
@@ -796,7 +965,7 @@ export default function Game() {
       });
     }
     previousModalRef.current = modalOpen;
-  }, [modalOpen]);
+  }, [modalOpen, playtestIntegrityError]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -814,7 +983,11 @@ export default function Game() {
       const evidenceElapsed = Math.max(0, (now - evidencePrevious) / 1000);
       evidenceFrameAtRef.current = now;
       const evidenceActive = !document.hidden
-        && (stateRef.current.phase === "playing" || stateRef.current.phase === "intermission");
+        && (
+          stateRef.current.phase === "playing"
+          || stateRef.current.phase === "intermission"
+          || stateRef.current.phase === "upgrade"
+        );
       const simulationActive =
         stateRef.current.phase === "playing" || stateRef.current.phase === "intermission";
       const events: EngineEvent[] = [];
@@ -847,17 +1020,40 @@ export default function Game() {
         events.some((event) => event.kind === "win" || event.kind === "lose")
       ) {
         endCommittedRef.current = true;
+        resultReachedAtRef.current = performance.now();
         audioRef.current?.stopDrone();
         const finalState = stateRef.current;
         const evidence = evidenceRef.current?.complete(finalState) ?? null;
         setResultEvidence(evidence);
+        const playtestSessionId = playtestSessionIdRef.current;
+        let playtestRecordSaved = !playtestSessionId;
+        if (evidence && playtestSessionId) {
+          playtestRecordSaved = Boolean(recordPlaytestRun(
+            playtestSessionId,
+            evidence,
+            finalState,
+            browserSessionStorage(),
+          ));
+        }
+        if (playtestSessionId && !playtestRecordSaved) {
+          const failureMarked = recordPlaytestProtocolDeviation(
+            playtestSessionId,
+            "terminal playtest record could not be committed",
+            browserSessionStorage(),
+          );
+          setPlaytestIntegrityMessage(failureMarked
+            ? "ラン結果を観察記録へ確定できませんでした。途中保存を消さず、観察者コンソールで中断ランまたは技術事故として確定してください。"
+            : "ラン結果も記録失敗自体も保存できませんでした。この回を正式データへ使用せず、運用事故として別途記録してください。");
+          playtestIntegrityErrorRef.current = true;
+          setPlaytestIntegrityError(true);
+        }
         updateProfile((current) => ({
           ...current,
           wins: current.wins + (finalState.phase === "won" ? 1 : 0),
           bestWave: Math.max(current.bestWave, finalState.waveIndex + 1),
           bestScore: Math.max(current.bestScore, finalState.score),
         }));
-        safeWriteActiveRun(null, null);
+        if (playtestRecordSaved) safeWriteActiveRun(null, null, gameStorageRef.current);
       }
 
       if (events.length || (simulationActive && renderAccumulator >= 0.04)) {
@@ -928,6 +1124,15 @@ export default function Game() {
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (playtestIntegrityErrorRef.current) {
+        const target = event.target instanceof HTMLElement ? event.target : null;
+        const integrityAction = target?.closest('[role="alertdialog"] a, [role="alertdialog"] button');
+        if (event.key === "Tab"
+          || (integrityAction && (event.key === "Enter" || event.code === "Space"))) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (event.repeat) return;
       const phase = stateRef.current.phase;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -1098,7 +1303,7 @@ export default function Game() {
         </div>
 
         <div className="hud-actions">
-          <button type="button" onClick={toggleLanguage} aria-label={t.languageLabel} className="icon-button text-button">
+          <button type="button" onClick={toggleLanguage} aria-label={t.languageLabel} className="icon-button text-button" disabled={officialPlaytest}>
             {t.language}
           </button>
           <button
@@ -1117,7 +1322,7 @@ export default function Game() {
             onClick={togglePause}
             aria-label={t.pause}
             className="icon-button pause-button"
-            disabled={!(["playing", "intermission", "paused"] as string[]).includes(view.phase)}
+            disabled={playtestIntegrityError || !(["playing", "intermission", "paused"] as string[]).includes(view.phase)}
           >
             <UiIcon name={view.phase === "paused" ? "play" : "pause"} className="ui-icon" />
           </button>
@@ -1385,7 +1590,7 @@ export default function Game() {
                   aria-describedby={circuitLoadEnabled
                     ? "mobile-relay-guidance mobile-relay-load"
                     : "mobile-relay-guidance"}
-                  disabled={view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
+                  disabled={playtestIntegrityError || view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
                 >
                   <RelayDial sector={currentSector} pulseProgress={pulseProgress} />
                   <span className="bf-relay-copy">
@@ -1599,7 +1804,7 @@ export default function Game() {
               aria-describedby={resonanceEnabled
                 ? "desktop-relay-guidance desktop-pulse-preview"
                 : "desktop-relay-guidance"}
-              disabled={view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
+              disabled={playtestIntegrityError || view.phase !== "playing" || (tutorialStep < 3 && view.transits.length > 0)}
             >
               <span className="relay-progress" aria-hidden="true" />
               <span className="relay-inner" aria-hidden="true">
@@ -1653,11 +1858,11 @@ export default function Game() {
       </main>
       </div>
 
-      {view.phase === "ready" && (
+      {view.phase === "ready" && !playtestIntegrityError && (
         <div ref={modalRef} tabIndex={-1} className="game-overlay opening-overlay" role="dialog" aria-modal="true" aria-busy={!initialized} aria-labelledby="opening-title" aria-describedby="opening-description" onKeyDown={trapModalFocus}>
           <div className="opening-copy">
             <div className="overlay-tools">
-              <button type="button" onClick={toggleLanguage} className="utility-button" aria-label={t.languageLabel}>{t.language}</button>
+              <button type="button" onClick={toggleLanguage} className="utility-button" aria-label={t.languageLabel} disabled={officialPlaytest}>{t.language}</button>
               <button type="button" onClick={toggleMute} className="utility-button" aria-label={muted || platformMuted ? t.unmute : t.mute} aria-pressed={muted || platformMuted} disabled={platformMuted}>{muted || platformMuted ? "SOUND OFF" : "SOUND ON"}</button>
             </div>
             <p className="eyebrow">{t.titleKicker}</p>
@@ -1674,10 +1879,10 @@ export default function Game() {
                 </span>
               ))}
             </div>
-            <button type="button" className="primary-action" onClick={() => beginRun("opening")} disabled={!initialized}>
+            <button type="button" className="primary-action" onClick={() => beginRun("opening")} disabled={!initialized || playtestIntegrityError}>
               <span>{profile.tutorialCompleted ? t.start : t.startGuided}</span><i aria-hidden="true">→</i>
             </button>
-            {!profile.tutorialCompleted && (
+            {!profile.tutorialCompleted && !officialPlaytest && (
               <button type="button" className="opening-skip" onClick={() => beginRun("opening", false)} disabled={!initialized}>
                 {t.skipTutorial}
               </button>
@@ -1694,7 +1899,18 @@ export default function Game() {
         </div>
       )}
 
-      {view.phase === "upgrade" && (
+      {playtestIntegrityError && (
+        <div ref={modalRef} tabIndex={-1} className="game-overlay opening-overlay" role="alertdialog" aria-modal="true" aria-labelledby="playtest-integrity-title" aria-describedby="playtest-integrity-description" onKeyDown={trapModalFocus}>
+          <div className="opening-copy">
+            <p className="eyebrow">PLAYTEST INTEGRITY LOCK</p>
+            <h2 id="playtest-integrity-title">テスト版の一致を確認できません</h2>
+            <p className="premise" id="playtest-integrity-description">{playtestIntegrityMessage}</p>
+            <a className="primary-action compact" href="/playtest"><span>観察者コンソールへ戻る</span></a>
+          </div>
+        </div>
+      )}
+
+      {view.phase === "upgrade" && !playtestIntegrityError && (
         <div ref={modalRef} tabIndex={-1} className="game-overlay upgrade-overlay" role="dialog" aria-modal="true" aria-labelledby="upgrade-title" aria-describedby="upgrade-description" onKeyDown={trapModalFocus}>
           <div className="upgrade-heading">
             <span>WAVE {view.waveIndex + 1} CLEAR</span>
@@ -1724,7 +1940,7 @@ export default function Game() {
         </div>
       )}
 
-      {view.phase === "intermission" && (
+      {view.phase === "intermission" && !playtestIntegrityError && (
         <div className="intermission-banner">
           <span className="sr-only" role="status">
             {latestUpgrade ? `${latestUpgrade.name[language]} ${latestUpgrade.value}. ` : ""}{t.intermission}
@@ -1740,7 +1956,7 @@ export default function Game() {
         </div>
       )}
 
-      {view.phase === "paused" && (
+      {view.phase === "paused" && !playtestIntegrityError && (
         <div ref={modalRef} tabIndex={-1} className="game-overlay pause-overlay" role="dialog" aria-modal="true" aria-labelledby="pause-title" aria-describedby="pause-description" onKeyDown={trapModalFocus}>
           <p className="eyebrow">SYSTEM HOLD</p>
           <h2 id="pause-title">{t.paused}</h2>
@@ -1769,7 +1985,7 @@ export default function Game() {
             </section>
           )}
           <div className="overlay-tools pause-tools">
-            <button type="button" onClick={toggleLanguage} className="utility-button" aria-label={t.languageLabel}>{t.language}</button>
+            <button type="button" onClick={toggleLanguage} className="utility-button" aria-label={t.languageLabel} disabled={officialPlaytest}>{t.language}</button>
             <button type="button" onClick={toggleMute} className="utility-button" aria-pressed={muted || platformMuted} disabled={platformMuted}>{muted || platformMuted ? t.unmute : t.mute}</button>
           </div>
           <button type="button" className="primary-action compact" onClick={togglePause} autoFocus>
@@ -1778,7 +1994,7 @@ export default function Game() {
         </div>
       )}
 
-      {(view.phase === "won" || view.phase === "lost") && (
+      {(view.phase === "won" || view.phase === "lost") && !playtestIntegrityError && (
         <div ref={modalRef} tabIndex={-1} className={`game-overlay result-overlay result-${view.phase}`} role="dialog" aria-modal="true" aria-labelledby="result-title" aria-describedby={visibleEvidence ? "result-summary result-evidence-summary" : "result-summary"} onKeyDown={trapModalFocus}>
           <p className="eyebrow">{view.phase === "won" ? "SHIFT COMPLETE" : "SHIFT TERMINATED"}</p>
           <h2 id="result-title">{view.phase === "won" ? t.victory : t.defeat}</h2>

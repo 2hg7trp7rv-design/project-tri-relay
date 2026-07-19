@@ -36,14 +36,20 @@ test("Next type-checking is isolated from Cloudflare-only entry points", async (
 
 test("Vercel production includes first-party performance and product telemetry", async () => {
   const layout = await readFile(path.join(root, "app/layout.tsx"), "utf8");
+  const observability = await readFile(path.join(root, "app/Observability.tsx"), "utf8");
   const telemetry = await readFile(path.join(root, "app/game/telemetry.ts"), "utf8");
   const game = await readFile(path.join(root, "app/game/Game.tsx"), "utf8");
   const metrics = await readFile(path.join(root, "app/game/playtest-metrics.ts"), "utf8");
 
-  assert.match(layout, /@vercel\/analytics\/next/);
-  assert.match(layout, /@vercel\/speed-insights\/next/);
+  assert.match(observability, /@vercel\/analytics\/next/);
+  assert.match(observability, /@vercel\/speed-insights\/next/);
+  assert.match(observability, /window\.location\.pathname === ["']\/playtest["']/);
+  assert.match(observability, /#playtest=/);
+  assert.match(observability, /dataset\.playtestSession === ["']active["']/);
+  assert.match(layout, /<Observability \/>/);
   assert.match(layout, /process\.env\.VERCEL === ["']1["']/);
   assert.match(telemetry, /tri-relay-observability/);
+  assert.match(game, /dataset\.playtestSession = ["']active["']/);
   for (const event of ["run_started", "upgrade_selected", "checkpoint_restored", "overdrive_used", "wave_cleared"]) {
     assert.match(game, new RegExp(event));
   }
@@ -75,6 +81,52 @@ test("client failures are bounded and reported without personal payloads", async
   assert.ok(!route.includes("userAgent"));
   assert.ok(!route.includes("request.headers.get(\"cookie\")"));
   assert.match(globalError, /reportClientError/);
+  const telemetry = await readFile(path.join(root, "app/game/telemetry.ts"), "utf8");
+  assert.match(telemetry, /credentials:\s*["']omit["']/);
+  assert.match(telemetry, /EVENT_FIELDS/);
+  assert.doesNotMatch(telemetry, /tester.?id|observer.?code|user.?agent/i);
+});
+
+test("v0.4.1 playtest operations stay local and require exact release identity", async () => {
+  const consoleSource = await readFile(path.join(root, "app/playtest/PlaytestConsole.tsx"), "utf8");
+  const sessionSource = await readFile(path.join(root, "app/game/playtest-session.ts"), "utf8");
+  const pageSource = await readFile(path.join(root, "app/playtest/page.tsx"), "utf8");
+  const layoutSource = await readFile(path.join(root, "app/layout.tsx"), "utf8");
+  const schema = await readJson("schemas/v04-playtest-session.schema.json");
+
+  assert.match(consoleSource, /window\.sessionStorage/);
+  assert.match(consoleSource, /JSONを保存/);
+  assert.match(consoleSource, /pagehide/);
+  assert.match(consoleSource, /<MachineGlyph/);
+  assert.match(consoleSource, /<EnemyGlyph/);
+  assert.match(consoleSource, /session\.sourceRevision/);
+  assert.match(consoleSource, /not-reached/);
+  assert.doesNotMatch(consoleSource, /navigator\.userAgent/);
+  assert.match(sessionSource, /PLAYTEST_TESTER_IDS/);
+  assert.match(sessionSource, /PLAYTEST_RELEASE = ["']0\.4\.1["']/);
+  assert.match(sessionSource, /\^\[0-9a-f\]\{40\}\$/i);
+  assert.match(sessionSource, /\^#playtest=/);
+  assert.match(sessionSource, /deploymentEnvironment !== ["']production["']/);
+  assert.match(sessionSource, /\.vercel\.app/);
+  assert.match(sessionSource, /beginPlaytestRun/);
+  assert.match(sessionSource, /if \(!session\.currentRunStartedAt\) return null/);
+  assert.match(sessionSource, /duplicate session ID|currentRunStartedAt/);
+  assert.doesNotMatch(sessionSource, /trackGameEvent|@vercel\/analytics/);
+  const game = await readFile(path.join(root, "app/game/Game.tsx"), "utf8");
+  assert.match(game, /stateRef\.current\.phase === ["']upgrade["']/);
+  assert.match(game, /recordPlaytestRun/);
+  assert.match(game, /tri-relay-source-revision/);
+  assert.match(game, /window\.location\.origin === deploymentOrigin/);
+  assert.match(game, /!officialPlaytest/);
+  assert.match(game, /checkpointable/);
+  assert.match(game, /recordPlaytestProtocolDeviation/);
+  assert.match(layoutSource, /tri-relay-deployment-environment/);
+  assert.match(pageSource, /index:\s*false/);
+  assert.equal(schema.properties.release.const, "0.4.1");
+  assert.equal(schema.properties.testerId.enum.length, 10);
+  assert.ok(schema.$defs.observation.required.includes("firstLookedAt"));
+  assert.ok(schema.$defs.observation.required.includes("behaviorNotes"));
+  assert.ok(schema.$defs.observation.properties.wallTimings.required.includes("ninetySecondMark"));
 });
 
 test("CrazyGames host mute setting overrides the in-game audio toggle", async () => {
@@ -149,7 +201,7 @@ test("v0.4 validates the complete checkpoint schema and migrates the profile onl
   assert.match(persistence, /candidate\.length > maximum/);
   assert.match(persistence, /ids\.has/);
   assert.match(game, /const evidence = evidenceRef\.current\?\.snapshot\(\) \?\? null/);
-  assert.match(game, /safeWriteActiveRun\(snapshot, evidence\)/);
+  assert.match(game, /safeWriteActiveRun\(\s*snapshot,\s*evidence,/s);
 });
 
 test("v0.4 battlefield keeps live state readable without solving the route", async () => {

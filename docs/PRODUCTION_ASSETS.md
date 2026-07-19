@@ -130,7 +130,7 @@ For the v02 set, the portrait master was generated first and the landscape maste
 
 ### Five-second readability
 
-At 320 × 568, a first-time tester can point to the threat, city, current route, next route, ore, ammo, and the one tappable relay within five seconds. Eight of ten testers must distinguish all three facilities and all four enemy silhouettes without relying on colour alone.
+At 320 × 568, a first-time tester must identify the one tappable relay within five seconds. Record recognition of the threat, city, current route, next route, ore, and ammo separately instead of pretending every item was inspected in the same five-second window. Eight of ten testers must also distinguish all three facilities and, in a separate post-run check where every shape is actually shown, all four enemy silhouettes without relying on colour alone.
 
 ### Composition and responsive behavior
 
